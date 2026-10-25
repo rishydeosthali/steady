@@ -6,8 +6,8 @@ Build a compelling HackTX demo for Capital One with Andrew and two teammates.
 Steady is a proactive financial agent for older adults on fixed incomes. It
 contacts them by phone and text before bills are due, plans payments around
 income, and executes an agreed payment after a clear confirmation. The senior
-does not need an app, login, or menu. Capital One's Nessie API is the intended
-banking sandbox.
+does not need an app, login, or menu. Capital One's Nessie API is the confirmed
+banking sandbox for this project.
 
 Older adults face late fees, overdrafts, scams, and tools that require them to
 open an app and interpret their finances. Steady monitors and plans first, then

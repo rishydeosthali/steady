@@ -10,7 +10,7 @@ in later prompts. Work on the assigned task; do not build unrelated features.
 - The LLM handles judgment and language; deterministic code handles money.
 - Payment execution requires explicit confirmation tied to the payee, amount,
   and date; enforce cash buffers, safety checks, and idempotency in code.
-- Treat Nessie as the intended sandbox integration. Never silently substitute
+- Use Capital One's Nessie API as the confirmed sandbox integration. Never silently substitute
   real banking or claim an unimplemented feature works.
 - Use patient, plain language and support clarification, cancellation, and a
   trusted-person approval loop without taking away the senior's independence.
