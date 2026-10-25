@@ -82,4 +82,23 @@ Treat the comparison in this pitch as messaging to validate before presenting.
 The remote repository had no commits or branches when cloned on October 24,
 2026. Setup creates Andrew's `andrew` branch with project context and agent
 guidance. `main` must exist with shared history before opening a PR to it.
-No application functionality has been implemented by this setup task.
+No application functionality was implemented by the initial setup task.
+
+## Current implementation and team handoff
+
+Andrew's synthetic-data work integrates Rishy's `b63af81` commit: a Python/Flask
+WhatsApp webhook, Twilio outbound replies, OpenAI intent/wording, and a read-only
+Nessie client. Payment functions in `backend/money/contracts.py` remain stubs.
+The remote still had no `main` when this work fetched it; `rishy` was merged into
+`andrew` instead. The current runtime uses Twilio WhatsApp; simulator-only
+channel statements in `FEATURES_AND_GOALS.md` describe an earlier proposed scope.
+
+Andrew supplied four work areas: (1) deterministic planning, safety, and payment
+execution; (2) memory, monitoring, proactive triggers, and demo reset;
+(3) texting, forgiving conversation, cancellation language, and stretch photo
+intake; (4) trusted-person approvals, demo visibility, and pitch. These are work
+areas, not a change to the number of teammates or assigned individual owners.
+
+See `SYNTHETIC_DATA.md` for four fictional profiles, fifteen scenario expectations,
+and integration commands. Fixtures support the current account-question flow;
+their future money-action expectations do not imply those features are built.

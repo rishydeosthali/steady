@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "scenarios": [
+    {
+      "id": "safe_payment", "profile": "margaret", "title": "Familiar bill, sufficient funds",
+      "roles": [1, 2, 3], "target_bill": "electric",
+      "expected": {"earliest_safe_day": 0, "gate": "allow", "requires_user_confirmation": true},
+      "messages": [{"actor": "senior", "text": "What bills do I have?"}, {"actor": "senior", "text": "Yes, please pay Austin Energy."}],
+      "notes": "Only the bill question works today. A future executor must bind explicit approval to the read-back payee, amount, and date."
+    },
+    {
+      "id": "wait_for_income", "profile": "robert", "title": "Wait for income and reserve the phone bill",
+      "roles": [1, 2, 3, 4], "target_bill": "electric",
+      "expected": {"earliest_safe_day": 6, "gate": "needs_trusted_person", "requires_user_confirmation": true, "requires_settled_income": true},
+      "messages": [{"actor": "senior", "text": "Can I pay my electric bill now?"}],
+      "notes": "The $600 bill also exceeds the family threshold. A forecasted deposit is not available cash; re-read the settled balance before execution."
+    },
+    {
+      "id": "income_delayed", "profile": "robert", "title": "Expected income slips beyond the deadline",
+      "roles": [1, 2, 4], "target_bill": "electric", "income_delay_days": 7,
+      "expected": {"earliest_safe_day": null, "gate": "blocked", "reason": "income_after_deadline", "max_payment_creations": 0},
+      "messages": [{"actor": "senior", "text": "My pension is late. Can the electric bill still be paid?"}],
+      "notes": "The expected deposit moves from day 6 to day 13; the bill remains due on day 9. Do not reuse the original safe date. Historical income dates are unchanged."
+    },
+    {
+      "id": "insufficient_funds", "profile": "linda", "title": "No safe date before the deadline",
+      "roles": [1, 2, 4], "target_bill": "phone",
+      "expected": {"earliest_safe_day": null, "gate": "blocked", "reason": "insufficient_funds", "max_payment_creations": 0},
+      "messages": [{"actor": "senior", "text": "Please take care of my phone bill."}],
+      "notes": "Notify the senior and trusted person. Do not schedule after the deadline or silently spend the protected buffer."
+    },
+    {
+      "id": "spending_shortfall", "profile": "margaret", "title": "An optional purchase jeopardizes a bill",
+      "roles": [1, 2], "target_bill": "phone",
+      "balance_cents": 40000,
+      "bills": [{"id": "phone", "payee": "Demo Phone", "nickname": "Phone", "amount_cents": 8500, "due_day": 5}],
+      "proposed_purchase": {"merchant": "Demo Home Goods", "amount_cents": 15000, "day": 0},
+      "expected": {"earliest_safe_day": 0, "balance_after_purchase_and_bill_cents": 16500, "alert": "purchase_threatens_bill", "max_payment_creations": 0},
+      "messages": [{"actor": "senior", "text": "Can I spend $150 on a chair?"}],
+      "notes": "The optional purchase is a what-if, not an already settled debit. Include the $85 phone bill and $200 buffer."
+    },
+    {
+      "id": "new_subscription", "profile": "james", "title": "First charge from an unfamiliar subscription",
+      "roles": [2],
+      "extra_purchases": [{"merchant": "Demo Wellness Club", "description": "New monthly membership", "amount_cents": 2900, "day": -1}],
+      "expected": {"alert": "possible_new_subscription", "merchant": "Demo Wellness Club", "max_payment_creations": 0},
+      "messages": [{"actor": "senior", "text": "Is there anything new in my spending?"}],
+      "notes": "A first charge is a candidate to confirm, not proof of recurrence or fraud. Compare against the provided history."
+    },
+    {
+      "id": "subscription_increase", "profile": "margaret", "title": "A familiar subscription rises in price",
+      "roles": [2],
+      "extra_purchases": [{"merchant": "Demo Streaming", "description": "Monthly subscription", "amount_cents": 3500, "day": -1}],
+      "expected": {"alert": "recurring_charge_increase", "previous_amount_cents": 1500, "new_amount_cents": 3500, "max_payment_creations": 0},
+      "messages": [{"actor": "senior", "text": "Did my subscriptions get more expensive?"}],
+      "notes": "The three previous monthly charges are $15 each. The current $35 charge is already reflected in the opening balance."
+    },
+    {
+      "id": "family_denies", "profile": "james", "title": "New roofer requires a family decision",
+      "roles": [1, 3, 4],
+      "payment_request": {"payee": "Demo Roofing", "amount_cents": 240000, "day": 1},
+      "expected": {"gate": "needs_trusted_person", "after_reply": "denied", "max_payment_creations": 0, "share_balance_with_family": false},
+      "messages": [{"actor": "senior", "text": "Pay Demo Roofing $2,400."}, {"actor": "trusted_person", "text": "Deny"}],
+      "notes": "Sufficient funds do not override a new-payee or amount gate. Do not include account balance in the family text."
+    },
+    {
+      "id": "family_approves", "profile": "james", "title": "A new payee gets both required approvals",
+      "roles": [1, 3, 4],
+      "payment_request": {"payee": "Demo Roofing", "amount_cents": 240000, "day": 1},
+      "expected": {"gate": "needs_trusted_person", "after_reply": "eligible_after_both_approvals", "max_payment_creations": 1, "requires_prior_readback": true, "requires_user_confirmation": true, "share_balance_with_family": false},
+      "messages": [{"actor": "senior", "text": "Pay Demo Roofing $2,400."}, {"actor": "trusted_person", "text": "Approve"}, {"actor": "senior", "text": "Yes, that payee, amount, and date are correct."}],
+      "notes": "The future app must insert the exact read-back and bind both approvals to the same immutable request. Family approval alone is insufficient."
+    },
+    {
+      "id": "family_timeout", "profile": "james", "title": "No family reply must never mean approval",
+      "roles": [1, 4],
+      "payment_request": {"payee": "Demo Roofing", "amount_cents": 240000, "day": 1},
+      "expected": {"gate": "needs_trusted_person", "after_timeout": "held", "max_payment_creations": 0},
+      "messages": [{"actor": "senior", "text": "Yes, pay the roofer."}],
+      "notes": "Advance the test clock beyond the implementation's approval expiry. No particular expiry duration is prescribed by this dataset."
+    },
+    {
+      "id": "gift_card_scam", "profile": "margaret", "title": "Urgent gift-card demand contradicts a paid bill",
+      "roles": [1, 2, 3, 4],
+      "claimed_bill": "electric-history-1",
+      "forwarded_claim": {"payee": "Austin Energy", "amount_cents": 12000, "payment_method": "gift_card", "urgent": true},
+      "expected": {"gate": "blocked", "reason": "gift_card_demand", "notify_trusted_person": true, "max_payment_creations": 0},
+      "messages": [{"actor": "senior", "text": "Forwarded: Austin Energy says my last electric bill is unpaid. Shutoff today! Buy $120 in gift cards and send the codes now."}],
+      "notes": "The last recorded electric bill is completed. Never follow the forwarded instructions or treat them as payment authorization."
+    },
+    {
+      "id": "duplicate_confirmation", "profile": "margaret", "title": "A retried message cannot pay twice",
+      "roles": [1, 3], "target_bill": "electric",
+      "expected": {"earliest_safe_day": 0, "gate": "allow", "max_payment_creations": 1, "requires_prior_readback": true},
+      "messages": [{"actor": "senior", "message_id": "synthetic-confirmation-1", "text": "Yes"}, {"actor": "senior", "message_id": "synthetic-confirmation-1", "text": "Yes"}],
+      "notes": "Future test setup must establish an exact payment read-back before these replies. Also retry the executor after a simulated lost response, using the same payment-request id."
+    },
+    {
+      "id": "cancel_scheduled", "profile": "margaret", "title": "Cancel a future approved payment",
+      "roles": [1, 3], "target_bill": "electric",
+      "scheduled_day": 7, "cancel_day": 1,
+      "expected": {"final_status": "cancelled", "max_payment_creations": 1, "settlements_after_cancel": 0},
+      "messages": [{"actor": "senior", "text": "Undo that electric payment, please."}],
+      "notes": "Future test setup must create the approved schedule first. Cancellation on day 1 precedes the scheduled day 7. Verify cancellation against the actual executor; this fixture does not execute it."
+    },
+    {
+      "id": "exact_buffer", "profile": "margaret", "title": "Payment leaves exactly the protected buffer",
+      "roles": [1], "target_bill": "electric", "balance_cents": 32000,
+      "bills": [{"id": "electric", "payee": "Austin Energy", "nickname": "Electric", "amount_cents": 12000, "due_day": 7}],
+      "expected": {"earliest_safe_day": 0, "minimum_balance_cents": 20000, "gate": "allow"},
+      "messages": [],
+      "notes": "Benchmark convention: balance >= buffer is safe. Confirm this boundary with the money-brain owner before adopting it as production policy."
+    },
+    {
+      "id": "unknown_bill_amount", "profile": "margaret", "title": "Missing bill amount stays unknown",
+      "roles": [1, 3], "target_bill": "electric",
+      "bills": [{"id": "electric", "payee": "Austin Energy", "nickname": "Electric", "amount_cents": null, "due_day": 7}],
+      "expected": {"gate": "blocked", "reason": "missing_amount", "max_payment_creations": 0},
+      "messages": [{"actor": "senior", "text": "How much is my electric bill?"}],
+      "notes": "Do not infer the missing amount from previous bills, and never convert unknown to zero. Keep this case offline; null is intentionally not a valid create payload."
+    }
+  ]
+}

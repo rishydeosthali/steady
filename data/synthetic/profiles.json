@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "synthetic": true,
+  "anchor_date": "2026-10-24",
+  "currency": "USD",
+  "profiles": [
+    {
+      "id": "margaret",
+      "first_name": "Margaret",
+      "last_name": "Demo",
+      "age_band": "70-79",
+      "description": "Stable fixed income and three familiar household bills; matches the existing demo's opening balance and upcoming bill amounts.",
+      "balance_cents": 221300,
+      "buffer_cents": 20000,
+      "trusted_person": "Sarah Demo",
+      "family_threshold_cents": 50000,
+      "income": {"description": "Synthetic retirement benefit", "amount_cents": 187400, "next_day": 10},
+      "bills": [
+        {"id": "electric", "payee": "Austin Energy", "nickname": "Electric", "amount_cents": 12000, "due_day": 7},
+        {"id": "water", "payee": "Water Co", "nickname": "Water", "amount_cents": 4525, "due_day": 10},
+        {"id": "internet", "payee": "Spectrum", "nickname": "Internet", "amount_cents": 8999, "due_day": 19}
+      ],
+      "weekly_purchases": [
+        {"merchant": "Demo Grocery", "description": "Groceries", "amount_cents": 5500},
+        {"merchant": "Demo Pharmacy", "description": "Prescription pickup", "amount_cents": 1800}
+      ],
+      "subscriptions": [{"merchant": "Demo Streaming", "amount_cents": 1500}]
+    },
+    {
+      "id": "robert",
+      "first_name": "Robert",
+      "last_name": "Demo",
+      "age_band": "65-69",
+      "description": "A large electric bill is affordable only after the next expected deposit; another bill is due first.",
+      "balance_cents": 70000,
+      "buffer_cents": 20000,
+      "trusted_person": "Alex Demo",
+      "family_threshold_cents": 50000,
+      "income": {"description": "Synthetic pension", "amount_cents": 155000, "next_day": 6},
+      "bills": [
+        {"id": "electric", "payee": "Austin Energy", "nickname": "Electric", "amount_cents": 60000, "due_day": 9},
+        {"id": "phone", "payee": "Demo Phone", "nickname": "Phone", "amount_cents": 6000, "due_day": 5}
+      ],
+      "weekly_purchases": [
+        {"merchant": "Demo Grocery", "description": "Groceries", "amount_cents": 4500},
+        {"merchant": "Demo Transit", "description": "Transport", "amount_cents": 2000}
+      ],
+      "subscriptions": []
+    },
+    {
+      "id": "linda",
+      "first_name": "Linda",
+      "last_name": "Demo",
+      "age_band": "80-89",
+      "description": "A near-term bill has no safe payment date; the next expected income arrives after its due date.",
+      "balance_cents": 18000,
+      "buffer_cents": 20000,
+      "trusted_person": "Jordan Demo",
+      "family_threshold_cents": 50000,
+      "income": {"description": "Synthetic retirement benefit", "amount_cents": 120000, "next_day": 12},
+      "bills": [
+        {"id": "phone", "payee": "Demo Phone", "nickname": "Phone", "amount_cents": 8500, "due_day": 5},
+        {"id": "water", "payee": "Water Co", "nickname": "Water", "amount_cents": 4000, "due_day": 15}
+      ],
+      "weekly_purchases": [
+        {"merchant": "Demo Grocery", "description": "Groceries", "amount_cents": 4000},
+        {"merchant": "Demo Pharmacy", "description": "Prescription pickup", "amount_cents": 2200}
+      ],
+      "subscriptions": []
+    },
+    {
+      "id": "james",
+      "first_name": "James",
+      "last_name": "Demo",
+      "age_band": "70-79",
+      "description": "Comfortable cash buffer, rental housing, and recurring subscriptions; useful for isolating approval and monitoring cases.",
+      "balance_cents": 650000,
+      "buffer_cents": 20000,
+      "trusted_person": "Taylor Demo",
+      "family_threshold_cents": 50000,
+      "income": {"description": "Synthetic pension", "amount_cents": 210000, "next_day": 7},
+      "bills": [
+        {"id": "rent", "payee": "Demo Apartments", "nickname": "Rent", "amount_cents": 95000, "due_day": 8},
+        {"id": "electric", "payee": "Austin Energy", "nickname": "Electric", "amount_cents": 14500, "due_day": 4},
+        {"id": "internet", "payee": "Spectrum", "nickname": "Internet", "amount_cents": 8999, "due_day": 12}
+      ],
+      "weekly_purchases": [
+        {"merchant": "Demo Grocery", "description": "Groceries", "amount_cents": 6500},
+        {"merchant": "Demo Transit", "description": "Transport", "amount_cents": 2500}
+      ],
+      "subscriptions": [{"merchant": "Demo Streaming", "amount_cents": 1500}]
+    }
+  ]
+}

@@ -126,6 +126,32 @@ python -m pytest
 
 Tests use dummy credentials and fakes. They need no network and no `.env`.
 
+## Synthetic bill data
+
+Four fictional fixed-income profiles and fifteen repeatable scenarios are
+available for account questions now and payment/monitoring acceptance tests
+as those features are implemented. No API credentials are needed to inspect them:
+
+```sh
+python -m scripts.demo_data list
+python -m scripts.demo_data validate
+python -m scripts.demo_data facts --scenario safe_payment
+python -m scripts.demo_data export --scenario wait_for_income --output work/robert.json
+```
+
+To use them with the current WhatsApp app, run the read-only local Nessie fixture:
+
+```sh
+python -m scripts.demo_data serve --scenario safe_payment
+```
+
+Then start the WhatsApp app with `NESSIE_BASE_URL=http://127.0.0.1:5051`,
+`NESSIE_API_KEY=synthetic-not-a-secret`, and `STEADY_CUSTOMER_NAME=Margaret`
+in its process environment. Twilio/OpenAI setup is still required for WhatsApp.
+The fixture server cannot execute payments and never writes to real Nessie.
+See [the synthetic data guide](docs/SYNTHETIC_DATA.md) for exact commands,
+scenario outcomes, date rebasing, reset behavior, and the money-data contract.
+
 ## Development
 
 Andrew works on `andrew`. Team changes should go through pull requests to `main`

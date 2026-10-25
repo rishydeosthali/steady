@@ -48,8 +48,10 @@ in later prompts. Work on the assigned task; do not build unrelated features.
 
 ## Verification
 
-This repository was empty at setup; no application stack, test runner, or
-deployment target has been chosen. Inspect current files before assuming one.
-When implementation begins, document real setup and test commands in README.
+The current app is Python/Flask with Twilio WhatsApp, OpenAI, and a read-only
+Nessie client. Run `python -m pytest`; tests use fakes and need no credentials.
+Inspect current files before assuming payment/monitoring features are built.
+Synthetic data usage and its limits are in `docs/SYNTHETIC_DATA.md`; validate
+the authored fixtures with `python -m scripts.demo_data validate`.
 For money-related code, test deterministic forecasting, buffer enforcement,
 approval state transitions, duplicate delivery/retries, and cancellation.
