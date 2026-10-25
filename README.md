@@ -193,6 +193,57 @@ The fixture server cannot execute payments and never writes to real Nessie.
 See [the synthetic data guide](docs/SYNTHETIC_DATA.md) for exact commands,
 scenario outcomes, date rebasing, reset behavior, and the money-data contract.
 
+## Watcher
+
+The Watcher remembers her account between passes and decides when something is
+worth a text. Code decides every pattern and every number. The model may only
+reword a finished sentence, and its wording is dropped if it adds a dollar
+amount, a date or a weekday that the fact sheet lacks.
+
+One pass pulls Nessie and diffs it against the last snapshot. It then rebuilds
+her rhythm from completed records, judges what changed, skips anything already
+emitted, stores the result and hands it off. The first pass is a baseline, so
+past purchases never alert.
+
+| Pattern | Who sees it |
+| --- | --- |
+| Bill went up, duplicate charge, new monthly charge, purchase that would leave $200 or less after upcoming bills, usual deposit late, payment she put on hold | Mom, over WhatsApp, only inside the 24-hour session. Otherwise it waits in the queue |
+| Bill due within 14 days | Planner queue (`consumer=planner`), silent |
+| One charge somewhere new | Stored only, silent |
+
+Mom can also ask "What if I spend $1,900 at the dentist?". Code reads the
+amount from her text. Nothing is stored.
+
+```sh
+python -m backend.watch.run                    # one pass against live Nessie
+python -m backend.watch.run --date 2026-10-24  # pin the clock
+python -m backend.watch.demo                   # fixture shapes, no network
+```
+
+To show an alert on WhatsApp without touching Nessie, have Mom text the bot
+once, then stage a scenario against the running server:
+
+```sh
+python -m backend.watch.stage              # list: duplicate, subscription, bill_increase,
+                                           #       shortfall, deposit_missing, held
+python -m backend.watch.stage duplicate    # memorize a baseline, press Enter, new charge -> text
+```
+
+Staged scenarios use synthetic accounts and their own memory, `data/demo.sqlite`.
+
+Memory lives in `data/ledger.sqlite`, which is gitignored. Delete it to start
+over from a first look. Decisions (accepted, declined, held) are append-only.
+
+Routes for teammates on the same machine. They refuse any request relayed
+through the tunnel (403):
+
+| Route | Purpose |
+| --- | --- |
+| `POST /watch/run` | One pass. Optional JSON `{"date": "YYYY-MM-DD"}` |
+| `GET /watch/events?consumer=planner&delivered=false` | Stored verdicts |
+| `POST /watch/decisions` | `{"payee", "decision", "amount", "payment_date"}`. Appends to the tape |
+| `POST /watch/check` | `{"merchant", "amount"}`. Judges a purchase she is considering |
+
 ## Development
 
 Andrew works on `andrew`. Team changes should go through pull requests to `main`

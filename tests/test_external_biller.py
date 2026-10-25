@@ -6,10 +6,11 @@ inside Steady's state. They need no account credentials or public network.
 
 import json
 import os
-import selectors
+import queue
 import sqlite3
 import subprocess
 import sys
+import threading
 from datetime import date
 from uuid import uuid4
 
@@ -36,11 +37,13 @@ def provider(tmp_path):
                                 "--db",str(tmp_path/"provider.sqlite3"),"--as-of",ANCHOR.isoformat()],
                                env=env,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,text=True)
     try:
-        with selectors.DefaultSelector() as selector:
-            selector.register(process.stdout,selectors.EVENT_READ)
-            if not selector.select(timeout=10):
-                pytest.fail("Independent biller did not start")
-        ready = json.loads(process.stdout.readline())
+        # select() only accepts sockets on Windows, so read the ready line on a thread.
+        lines = queue.Queue()
+        threading.Thread(target=lambda: lines.put(process.stdout.readline()),daemon=True).start()
+        try:
+            ready = json.loads(lines.get(timeout=10))
+        except queue.Empty:
+            pytest.fail("Independent biller did not start")
         assert ready["simulation"] is True
         yield BillerClient(ready["url"],BILLER_TOKEN),process
     finally:
@@ -58,11 +61,30 @@ def payload(invoice):
             "due_date":invoice["due_date"],"simulation_date":ANCHOR.isoformat()}
 
 
-def setup_service(tmp_path,settings,biller,bank=None):
+class FakeMailer:
+    """Records caregiver approval requests instead of sending email."""
+
+    def __init__(self):
+        self.sent = []
+        self.fail = False
+
+    def request_approval(self,payment,token):
+        if self.fail:
+            from backend.payments.caregiver import MailError
+            raise MailError("Caregiver email failed: SMTPServerDisconnected")
+        self.sent.append((payment,token))
+
+    @property
+    def token(self):
+        return self.sent[-1][1]
+
+
+def setup_service(tmp_path,settings,biller,bank=None,mailer=None):
     bank = bank or FakeNessie(balance=2213,bills=[])
     transport = RecordingTwilio(settings)
     transport.record_inbound(MOM)
-    service = PaymentService(tmp_path/"steady.sqlite3",biller,bank,transport,MOM,demo_date=ANCHOR)
+    service = PaymentService(tmp_path/"steady.sqlite3",biller,bank,transport,MOM,demo_date=ANCHOR,
+                             mailer=mailer or FakeMailer(),caregiver_name="Sarah")
     service.tick()
     service.flush()
     return service,bank,transport
@@ -72,8 +94,15 @@ def job(service):
     return next(iter(service.state()["jobs"].values()))
 
 
+def senior_yes(service,sid="approval-sid"):
+    service.handle("YES "+job(service)["id"],"yes",sid)
+    service.flush()  # delivers the caregiver email
+
+
 def approve(service,sid="approval-sid"):
-    return service.handle("YES "+job(service)["id"],"yes",sid)
+    """Both approvals: the senior's exact yes, then the caregiver's emailed approval."""
+    senior_yes(service,sid)
+    return service.caregiver_decide(service.mailer.token,"approve")
 
 
 def test_real_http_provider_persists_idempotent_receipt_and_marks_invoice_paid(provider):
@@ -116,7 +145,7 @@ def test_original_signed_whatsapp_flow_reaches_independent_biller(provider,tmp_p
     service,bank,twilio = setup_service(tmp_path,settings,client)
     initial = job(service)
     assert initial["status"] == "awaiting_user" and initial["readback_delivered"]
-    assert "due in 3 day(s)" in twilio.sent[0][1]
+    assert "is due Wednesday, Oct 28" in twilio.sent[0][1] and "Would you like me to schedule it?" in twilio.sent[0][1]
     assert client.invoice(initial["invoice_id"])["status"] == "unpaid"
     llm = FakeLLM(intent={"intent":"yes","confidence":0.99,"needs":[],"restatement":""})
     app = create_app(settings,agent=Agent(llm,bank,"Margaret",payments=service),
@@ -126,6 +155,14 @@ def test_original_signed_whatsapp_flow_reaches_independent_biller(provider,tmp_p
         response = app.test_client().post("/whatsapp/inbound",data=data,
                                          headers={"X-Twilio-Signature":sign(data)})
         assert response.status_code == 200 and b"<Response" in response.data
+    assert job(service)["status"] == "awaiting_caregiver"
+    assert client._request("GET","/v1/payments")["payments"] == []
+    assert any("Caregiver approval is pending" in text for _,text in twilio.sent)
+    token = service.mailer.token
+    assert len(service.mailer.sent) == 1
+    for _ in range(2):
+        page = app.test_client().post(f"/caregiver/{token}/approve")
+        assert page.status_code == 200
     updated = job(service)
     assert updated["status"] == "paid"
     assert client.invoice(initial["invoice_id"])["status"] == "paid"
@@ -164,7 +201,7 @@ def test_restart_recovers_from_provider_acceptance_before_local_commit(provider,
     # Provider accepted but the Steady process died before persisting success.
     client.pay(pending["idempotency_key"],{**payload(client.invoice(pending["invoice_id"])),
                                           "simulation_date":pending["scheduled_for"]})
-    restarted = PaymentService(service.database,client,bank,twilio,MOM,demo_date=ANCHOR)
+    restarted = PaymentService(service.database,client,bank,twilio,MOM,demo_date=ANCHOR,mailer=FakeMailer())
     restarted.tick()
     assert job(restarted)["status"] == "paid"
     assert len(client._request("GET","/v1/payments")["payments"]) == 1
@@ -233,10 +270,11 @@ def test_wrong_sender_and_missing_sid_are_rejected_even_when_allow_any_sender(pr
     assert job(service)["user_approved"] is False
 
 
-def test_reference_readback_and_lexical_yes_are_all_required(provider,tmp_path,settings):
+def test_readback_and_lexical_yes_are_required(provider,tmp_path,settings):
     client,_ = provider
     service,_,transport = setup_service(tmp_path,settings,client)
-    for i,text in enumerate(("yes", "yes 00000000", "maybe yes "+job(service)["id"], "forwarded: YES "+job(service)["id"])):
+    for i,text in enumerate(("yes 00000000", "maybe yes "+job(service)["id"], "forwarded: YES "+job(service)["id"],
+                             "yes I guess, pay whatever")):
         service.handle(text,"yes",f"ambiguous-{i}")
         assert job(service)["status"] == "awaiting_user"
     state = service.state()

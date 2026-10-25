@@ -11,16 +11,26 @@ import logging
 import os
 import sys
 from concurrent.futures import ThreadPoolExecutor
+from datetime import date
+from functools import wraps
 
-from flask import Flask, Response, request
+from flask import Flask, Response, jsonify, request
 from twilio.twiml.messaging_response import MessagingResponse
 from werkzeug.middleware.proxy_fix import ProxyFix
 
+from .agent.intent import parse_amount_cents
 from .agent.llm import LLM
 from .agent.loop import Agent
 from .config import ConfigError, Settings, load_settings
-from .nessie.client import NessieClient
+from .nessie.client import NessieClient, NessieError
 from .twilio_client import SessionClosed, TwilioWhatsApp
+from .watch import stage
+from .watch.ledger import DecisionError
+from .watch.run import Watcher, build_watcher
+from .watch.units import to_cents
+
+LOCAL_ADDRS = {"127.0.0.1", "::1"}
+FORWARD_HEADERS = ("X-Forwarded-For", "Cf-Connecting-Ip", "Forwarded")
 
 log = logging.getLogger("steady")
 
@@ -37,10 +47,22 @@ def _empty_twiml() -> Response:
     return Response(str(MessagingResponse()), mimetype="text/xml")
 
 
+def _local_only(view):
+    """Watch routes change memory. Only answer requests made on this machine.
+
+    Anything relayed by the public tunnel carries forwarding headers and is refused.
+    """
+    @wraps(view)
+    def guarded(*args, **kwargs):
+        if request.remote_addr not in LOCAL_ADDRS or any(h in request.headers for h in FORWARD_HEADERS):
+            return jsonify({"error": "watch routes are local only"}), 403
+        return view(*args, **kwargs)
+    return guarded
+
+
 def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
                twilio: TwilioWhatsApp | None = None, executor: ThreadPoolExecutor | None = None,
-               payments=None
-               ) -> Flask:
+               payments=None, watcher: Watcher | None = None) -> Flask:
     settings = settings or load_settings()
     twilio = twilio or TwilioWhatsApp(settings)
     control_token = None
@@ -48,12 +70,23 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
         from .payments.integration import build_payments
         payments,control_token = build_payments(settings,
             NessieClient(settings.nessie_base_url,settings.nessie_api_key),twilio)
+
+    def mom_sink(_verdict, text: str) -> bool:
+        """Free-form only inside an open session. Otherwise it waits, undelivered."""
+        if not twilio.session_open(settings.mom_whatsapp_to):
+            return False
+        twilio.send_reply(settings.mom_whatsapp_to, text)
+        return True
+
     if agent is None:
+        llm = LLM(settings.openai_api_key, settings.openai_model)
+        watcher = watcher or build_watcher(settings, llm=llm, mom_sink=mom_sink)
         agent = Agent(
-            llm=LLM(settings.openai_api_key, settings.openai_model),
+            llm=llm,
             nessie=NessieClient(settings.nessie_base_url, settings.nessie_api_key),
             customer_first_name=settings.customer_first_name,
             payments=payments,
+            watcher=watcher,
         )
     executor = executor or ThreadPoolExecutor(max_workers=4, thread_name_prefix="steady")
     seen_sids: set[str] = set()
@@ -62,6 +95,9 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
     app.config["MAX_CONTENT_LENGTH"] = 16 * 1024
     if payments is not None:
         app.extensions["external_payments"] = payments
+        if hasattr(payments, "caregiver_decide"):
+            from .payments.integration import register_caregiver_routes
+            register_caregiver_routes(app, payments)
         if control_token:
             from .payments.integration import register_controls
             register_controls(app,payments,control_token)
@@ -103,7 +139,14 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
     def inbound() -> Response:
         # Signature first. Nothing from the form is read before this passes.
         if not signature_ok():
-            log.warning("rejected inbound request: bad signature")
+            url = request_url()
+            signature = request.headers.get("X-Twilio-Signature")
+            variants = {url.replace("https://", "http://", 1), url.replace("http://", "https://", 1),
+                        url.rstrip("/") + "/"} - {url}
+            match = next((v for v in sorted(variants)
+                          if twilio.validate_signature(v, request.form, signature)), None)
+            log.warning("rejected inbound request: bad signature for %s (signed=%s, matches %s)",
+                        url, bool(signature), match or "no variant")
             return Response("Forbidden", status=403)
 
         from_ = request.form.get("From", "")
@@ -131,6 +174,83 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
         if not signature_ok():
             return Response("Forbidden", status=403)
         return Response(status=204)           # never replies
+
+    def _need_watcher():
+        if watcher is None:
+            return jsonify({"error": "watcher is not configured"}), 503
+        return None
+
+    def _clock_arg(payload: dict) -> date | None:
+        raw = payload.get("date") or request.args.get("date")
+        return date.fromisoformat(raw) if raw else None
+
+    @app.post("/watch/run")
+    @_local_only
+    def watch_run():
+        if (missing := _need_watcher()):
+            return missing
+        try:
+            clock = _clock_arg(request.get_json(silent=True) or {})
+            return jsonify({"verdicts": watcher.run(clock)})
+        except ValueError:
+            return jsonify({"error": "date must be YYYY-MM-DD"}), 400
+        except NessieError as exc:
+            return jsonify({"error": f"Nessie read failed: {exc}"}), 502
+
+    @app.get("/watch/events")
+    @_local_only
+    def watch_events():
+        if (missing := _need_watcher()):
+            return missing
+        delivered = request.args.get("delivered")
+        flag = None if delivered is None else delivered.lower() in ("1", "true", "yes")
+        return jsonify({"events": watcher.ledger.events(request.args.get("consumer"), flag)})
+
+    @app.post("/watch/decisions")
+    @_local_only
+    def watch_decisions():
+        if (missing := _need_watcher()):
+            return missing
+        body = request.get_json(silent=True) or {}
+        amount = body.get("amount_cents")
+        if amount is None and body.get("amount") is not None:
+            amount = to_cents(body["amount"])
+        try:
+            row = watcher.ledger.record_decision(
+                str(body.get("payee") or ""), str(body.get("decision") or ""),
+                amount_cents=amount, payment_date=body.get("payment_date"))
+        except DecisionError as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify({"tape_row": row}), 201
+
+    @app.post("/watch/check")
+    @_local_only
+    def watch_check():
+        if (missing := _need_watcher()):
+            return missing
+        body = request.get_json(silent=True) or {}
+        merchant = str(body.get("merchant") or "").strip()
+        raw = body.get("amount")
+        amount = to_cents(raw) if isinstance(raw, (int, str)) and not isinstance(raw, bool) else None
+        if amount is None and isinstance(raw, str):
+            amount = parse_amount_cents(raw)
+        if not merchant or not amount or amount <= 0:
+            return jsonify({"error": "merchant and a positive amount are required"}), 400
+        try:
+            return jsonify(watcher.check(merchant, amount, _clock_arg(body)))
+        except ValueError:
+            return jsonify({"error": "date must be YYYY-MM-DD"}), 400
+        except NessieError as exc:
+            return jsonify({"error": f"Nessie read failed: {exc}"}), 502
+
+    @app.post("/watch/demo/<name>/<step>")
+    @_local_only
+    def watch_demo(name: str, step: str):
+        if name not in stage.SCENARIOS or step not in stage.STEPS:
+            return jsonify({"error": "unknown scenario or step",
+                            "scenarios": sorted(stage.SCENARIOS), "steps": list(stage.STEPS)}), 404
+        llm = getattr(watcher, "_llm", None)
+        return jsonify(stage.run_step(name, step, llm=llm, mom_sink=mom_sink))
 
     return app
 

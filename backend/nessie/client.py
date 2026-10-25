@@ -114,6 +114,13 @@ class NessieClient:
     def get_purchases(self, account_id: str) -> list[dict[str, Any]]:
         return self._list(f"/accounts/{account_id}/purchases")
 
+    def get_merchant(self, merchant_id: str) -> dict[str, Any]:
+        """A purchase carries only a merchant id; the name lives here."""
+        data = self._get(f"/merchants/{merchant_id}")
+        if not isinstance(data, dict):
+            raise NessieError("merchant response had an unexpected shape")
+        return data
+
     def _list(self, path: str) -> list[dict[str, Any]]:
         try:
             data = self._get(path)

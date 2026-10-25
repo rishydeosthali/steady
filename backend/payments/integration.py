@@ -7,14 +7,34 @@ import threading
 from dataclasses import replace
 from datetime import date
 
-from flask import jsonify, request
+from flask import Response, jsonify, request
 
 from ..config import ConfigError
 from ..twilio_client import TwilioWhatsApp
+from .caregiver import CaregiverMailer, render_page
 from .client import BillerClient
 from .service import PaymentService
 
 log = logging.getLogger(__name__)
+
+
+def build_mailer(settings):
+    required = ("GMAIL_ADDRESS","GMAIL_APP_PASSWORD","CAREGIVER_EMAIL")
+    missing = [name for name in required if not os.environ.get(name, "").strip()]
+    if missing:
+        raise ConfigError("Caregiver approval email needs: " + ", ".join(missing))
+    base_url = (os.environ.get("STEADY_APPROVAL_BASE_URL", "").strip() or settings.public_base_url
+                or "http://127.0.0.1:5000")
+    try:
+        return CaregiverMailer(os.environ["GMAIL_ADDRESS"].strip(), os.environ["GMAIL_APP_PASSWORD"].strip(),
+                               os.environ["CAREGIVER_EMAIL"].strip(), base_url=base_url,
+                               caregiver_name=caregiver_name(), senior_name=settings.customer_first_name)
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from None
+
+
+def caregiver_name():
+    return os.environ.get("CAREGIVER_NAME", "").strip() or "your caregiver"
 
 
 def build_payments(settings, nessie, twilio):
@@ -40,8 +60,49 @@ def build_payments(settings, nessie, twilio):
                              biller,nessie,twilio,settings.mom_whatsapp_to,
                              customer_name=settings.customer_first_name,
                              customer_ref=os.environ.get("BILLER_CUSTOMER_REF","demo-margaret"),
-                             demo_date=demo_date,wakeup=wakeup)
+                             demo_date=demo_date,wakeup=wakeup,mailer=build_mailer(settings),
+                             caregiver_name=caregiver_name())
     return service,token
+
+
+def register_caregiver_routes(app, service):
+    """Public by design: the caregiver opens these from email, often via the tunnel.
+
+    The unguessable per-request token is the credential. GET only displays;
+    decisions require POST.
+    """
+    def page(html, status=200):
+        response = Response(html, status=status, mimetype="text/html")
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Content-Security-Policy"] = ("default-src 'none'; style-src 'unsafe-inline'; "
+                                                       "form-action 'self'; frame-ancestors 'none'")
+        return response
+
+    missing = "<!doctype html><p>This approval link is not valid.</p>"
+
+    @app.get("/caregiver/<token>",endpoint="caregiver_request")
+    def caregiver_request(token):
+        view = service.caregiver_view(token)
+        if view is None:
+            return page(missing,404)
+        decision = request.args.get("decision")
+        return page(render_page(view,token,preselect=decision if decision in {"approve","deny"} else None))
+
+    @app.post("/caregiver/<token>/<decision>",endpoint="caregiver_decision")
+    def caregiver_decision(token, decision):
+        if decision not in {"approve","deny"}:
+            return page(missing,404)
+        view,message = service.caregiver_decide(token,decision)
+        if view is None:
+            return page(missing,404)
+        try:
+            service.tick()
+            service.flush()
+        except Exception as exc:  # the decision is saved; the worker retries delivery
+            log.error("post-decision run failed: %s",type(exc).__name__)
+        return page(render_page(view,token,message=message))
 
 
 def register_controls(app, service, token):
