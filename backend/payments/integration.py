@@ -145,8 +145,8 @@ def register_controls(app, service, token):
 
 
 class PaymentWorker:
-    def __init__(self, service, *, interval=10):
-        self.service,self.interval = service,interval
+    def __init__(self, service, *, interval=10, extra=None):
+        self.service,self.interval,self.extra = service,interval,extra
         self.stop_event = threading.Event()
         self.thread = threading.Thread(target=self._run,name="external-biller-monitor",daemon=True)
 
@@ -155,8 +155,10 @@ class PaymentWorker:
             try:
                 self.service.tick()
                 self.service.flush()
-            except Exception as exc:
-                log.error("External biller worker failed: %s",type(exc).__name__)
+                if self.extra:
+                    self.extra()
+            except Exception as extra_exc:
+                log.error("External biller worker failed: %s",type(extra_exc).__name__)
             self.stop_event.wait(self.interval)
 
     def start(self):

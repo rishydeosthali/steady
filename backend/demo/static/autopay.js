@@ -54,10 +54,23 @@ function render(state) {
     const status = node("td"); status.append(node("span", r.status.replaceAll("_", " "), "status " + r.status)); tr.append(status); $("requests").append(tr);
   }
   $("events").replaceChildren();
-  for (const event of [...state.events].reverse()) {const li = node("li"); li.append(node("time", event.date + " · " + event.kind.replaceAll("_", " ")), node("span", event.text)); $("events").append(li);}
+  if (!state.events.length) $("events").append(node("p", "The tape is empty until Steady proposes a bill.", "empty"));
+  for (const event of [...state.events].reverse()) {
+    const li = node("li"), card = node("article", undefined, "tape-card"), head = node("header");
+    head.append(node("span", event.kind.replaceAll("_", " "), "kind " + event.kind));
+    head.append(node("time", event.date));
+    card.append(head, node("p", event.reason || event.text));
+    li.append(card); $("events").append(li);
+  }
   $("ledger").replaceChildren();
-  if (!ledger.length) $("ledger").append(node("li", "No simulated money has moved. A proposal alone never creates a payment."));
-  for (const entry of ledger.reverse()) {const li = node("li"); li.append(node("time", entry.date + " · " + entry.kind), node("span", (entry.kind === "deposit" ? "+ " : "− ") + money(entry.amount_cents) + (entry.payee ? " · " + entry.payee : " · synthetic income"))); $("ledger").append(li);}
+  if (!ledger.length) $("ledger").append(node("p", "No simulated money has moved. A proposal alone never creates a payment.", "empty"));
+  for (const entry of ledger.reverse()) {
+    const li = node("li"), card = node("article", undefined, "tape-card"), head = node("header");
+    head.append(node("span", entry.kind, "kind " + entry.kind));
+    head.append(node("time", entry.date));
+    card.append(head, node("p", (entry.kind === "deposit" ? "+ " : "− ") + money(entry.amount_cents) + (entry.payee ? " · " + entry.payee : " · synthetic income")));
+    li.append(card); $("ledger").append(li);
+  }
 }
 async function refresh() { if (!token) return; try {render(await api("/api/state"));} catch (err) {error(err.message);} }
 $("access-form").addEventListener("submit", async (event) => {event.preventDefault(); token = $("token").value.trim(); try {render(await api("/api/state")); sessionStorage.setItem("steady-demo-token",token); $("token").value=""; error("");} catch (err) {error(err.message);} });

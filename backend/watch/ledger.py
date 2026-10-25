@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +51,18 @@ CREATE TABLE IF NOT EXISTS verdicts (
     resolved INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS flags (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    dedupe_key TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS followups (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    fire_at TEXT NOT NULL,
+    message TEXT NOT NULL,
+    sent INTEGER NOT NULL DEFAULT 0
+);
 """
 
 
@@ -66,6 +78,7 @@ class Ledger:
     def __init__(self, path: str | Path = DEFAULT_PATH):
         if str(path) != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self.path = Path(path) if str(path) != ":memory:" else None
         self._db = sqlite3.connect(str(path), check_same_thread=False)
         self._db.row_factory = sqlite3.Row
         self._lock = threading.Lock()
@@ -196,3 +209,50 @@ class Ledger:
             rows = self._db.execute(query + " ORDER BY seq", args).fetchall()
         return [{**json.loads(r["sheet"]), "text": r["text"], "delivered": bool(r["delivered"]),
                  "resolved": bool(r["resolved"]), "created_at": r["created_at"]} for r in rows]
+
+    def open_alerts(self) -> list[dict[str, Any]]:
+        """Mom-facing alerts that still need an answer."""
+        return [e for e in self.events(consumer="mom") if e.get("notify") and not e.get("resolved")]
+
+    def resolve_alert(self, dedupe_key: str) -> bool:
+        with self._lock, self._db:
+            cur = self._db.execute("UPDATE verdicts SET resolved = 1 WHERE dedupe_key = ? AND resolved = 0",
+                                   (dedupe_key,))
+        return cur.rowcount == 1
+
+    def flag_transaction(self, dedupe_key: str, reason: str) -> bool:
+        """Mark a known alert as unexpected. No-op when the id is unknown."""
+        reason = (reason or "unexpected").strip()[:200]
+        with self._lock, self._db:
+            row = self._db.execute("SELECT 1 FROM verdicts WHERE dedupe_key = ?", (dedupe_key,)).fetchone()
+            if row is None:
+                return False
+            self._db.execute("INSERT INTO flags (dedupe_key, reason, created_at) VALUES (?, ?, ?)",
+                             (dedupe_key, reason, _now()))
+            self._db.execute("UPDATE verdicts SET resolved = 1 WHERE dedupe_key = ?", (dedupe_key,))
+        return True
+
+    def flags(self) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._db.execute("SELECT * FROM flags ORDER BY seq").fetchall()
+        return [dict(r) for r in rows]
+
+    def schedule_followup(self, minutes: int, message: str) -> dict[str, Any] | None:
+        if not isinstance(minutes, int) or isinstance(minutes, bool) or not 1 <= minutes <= 24 * 60:
+            return None
+        text = (message or "").strip()
+        if not text:
+            return None
+        fire_at = (datetime.now(timezone.utc) + timedelta(minutes=minutes)).isoformat(timespec="seconds")
+        with self._lock, self._db:
+            cur = self._db.execute("INSERT INTO followups (fire_at, message, sent) VALUES (?, ?, 0)",
+                                   (fire_at, text[:400]))
+        return {"id": cur.lastrowid, "fire_at": fire_at, "message": text[:400]}
+
+    def due_followups(self, now: datetime | None = None) -> list[str]:
+        when = (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")
+        with self._lock, self._db:
+            rows = self._db.execute("SELECT seq, message FROM followups WHERE sent = 0 AND fire_at <= ?",
+                                    (when,)).fetchall()
+            self._db.executemany("UPDATE followups SET sent = 1 WHERE seq = ?", [(r["seq"],) for r in rows])
+        return [r["message"] for r in rows]

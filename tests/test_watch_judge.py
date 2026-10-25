@@ -66,7 +66,8 @@ def test_bill_increase_fires_with_the_spec_sentence():
     v = run_pair(None, bill_increase_shape("85.00"), LIVE_CLOCK)
     inc = [x for x in v if x["kind"] == "bill_increase"]
     assert len(inc) == 1
-    assert fallback(inc[0]) == "Your internet bill increased from $65 to $85."
+    assert fallback(inc[0]) == ("Your internet bill increased from $65 to $85. "
+                                "Is that normal? Reply yes or no.")
     assert inc[0]["dedupe_key"] == "bill_increase:b-net-pending:8500"
 
 

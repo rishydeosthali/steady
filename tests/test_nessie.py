@@ -52,6 +52,10 @@ def test_errors_never_contain_the_key():
             import requests
             raise requests.ConnectionError(f"failed for {url}?key={params['key']}")
 
+        def request(self, method, url, params=None, json=None, timeout=None):
+            import requests
+            raise requests.ConnectionError(f"failed for {url}?key={params['key']}")
+
     c = NessieClient(BASE, DUMMY_NESSIE_KEY, session=Boom({}))
     with pytest.raises(NessieError) as exc:
         c.get_bills("chk")
@@ -63,3 +67,25 @@ def test_http_error_message_has_no_key():
     with pytest.raises(NessieError) as exc:
         c.get_bills("chk")
     assert DUMMY_NESSIE_KEY not in str(exc.value)
+
+
+def test_create_bill_posts_body_and_returns_object():
+    created = {"_id": "bill-9", "payee": "Austin Energy", "payment_amount": 130.0,
+               "payment_date": "2026-10-31", "status": "pending"}
+    c, s = client({"/accounts/chk/bills": FakeResponse(201, {"objectCreated": created})})
+    body = {"status": "pending", "payee": "Austin Energy", "payment_amount": 130.0,
+            "payment_date": "2026-10-31", "recurring_date": 31, "nickname": "Electric"}
+    assert c.create_bill("chk", body) == created
+    assert s.requests[-1][0] == "POST"
+    assert s.bodies[-1] == body
+
+
+def test_update_bill_puts_body():
+    c, s = client({"/bills/bill-ae": FakeResponse(202, {"message": "Accepted"})})
+    body = {"status": "pending", "payee": "Austin Energy", "payment_amount": 130.0,
+            "payment_date": "2026-10-31", "recurring_date": 31, "nickname": "Electric"}
+    got = c.update_bill("bill-ae", body)
+    assert got["_id"] == "bill-ae"
+    assert got["payment_amount"] == 130.0
+    assert s.requests[-1][0] == "PUT"
+    assert s.bodies[-1] == body

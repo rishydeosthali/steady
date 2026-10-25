@@ -13,10 +13,11 @@ import sqlite3
 import uuid
 from contextlib import contextmanager
 from copy import deepcopy
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
+from ..agent.audit import asks_for_summary, format_recap
 from .data import load_scenario
 
 ACTIVE = {"awaiting_user", "awaiting_family", "scheduled"}
@@ -61,13 +62,20 @@ def default_snapshot(as_of: date | None = None) -> dict:
     return snapshot
 
 
+PAUSE_SECONDS = 60
+SUMMARY_OFFER = "Would you like a short summary of what we just did?"
+
+
 class AutopayDemo:
-    def __init__(self, database: str | Path, snapshot: dict | None = None, *, external=False):
+    def __init__(self, database: str | Path, snapshot: dict | None = None, *, external=False,
+                 clock=None, pause_seconds: int = PAUSE_SECONDS):
         self.database = str(database)
         if self.database == ":memory:":
             raise ValueError("Use a file so each connection shares durable state")
         Path(self.database).parent.mkdir(parents=True, exist_ok=True)
         self.external = external
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self.pause_seconds = pause_seconds
         with sqlite3.connect(self.database) as db:
             db.execute("CREATE TABLE IF NOT EXISTS state (id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL)")
             # Kept across reset so an old Twilio retry can never approve a new run.
@@ -100,7 +108,8 @@ class AutopayDemo:
         return {"schema_version": 1, "synthetic": True, "external": self.external, "run_id": uuid.uuid4().hex,
                 "today": snapshot["as_of"], "snapshot": snapshot,
                 "balance_cents": cents(snapshot["account"]["balance"]),
-                "requests": {}, "ledger": {}, "messages": [], "events": []}
+                "requests": {}, "ledger": {}, "messages": [], "events": [],
+                "idle": {"last_human_at": None, "offered": False, "awaiting": False}}
 
     @contextmanager
     def _transaction(self):
@@ -122,9 +131,32 @@ class AutopayDemo:
         with self._transaction() as (_, state):
             return deepcopy(state)
 
-    def _event(self, state, kind, text, request_id=None):
+    def _event(self, state, kind, text, request_id=None, reason=None):
         state["events"].append({"id": len(state["events"]) + 1, "date": state["today"],
-                                "kind": kind, "text": text, "request_id": request_id})
+                                "kind": kind, "text": text, "reason": reason or text,
+                                "request_id": request_id})
+
+    def _recap(self, state) -> str:
+        rows = [{"kind": e["kind"], "reason": e.get("text") or "", "detail": {}}
+                for e in state["events"] if e["kind"] not in {"offer", "summary", "reset"}]
+        return format_recap(rows)[0]
+
+    def _maybe_offer_summary(self, state) -> None:
+        idle = state.setdefault("idle", {"last_human_at": None, "offered": False, "awaiting": False})
+        if idle.get("offered") or idle.get("awaiting"):
+            return
+        last = idle.get("last_human_at")
+        if not last or not any(e["kind"] not in {"offer", "summary", "reset"} for e in state["events"]):
+            return
+        try:
+            elapsed = (self._clock() - datetime.fromisoformat(last)).total_seconds()
+        except ValueError:
+            return
+        if elapsed < self.pause_seconds:
+            return
+        idle["offered"] = idle["awaiting"] = True
+        self._event(state, "offer", "Conversation paused. Offered a recap.")
+        self._emit(state, "senior", SUMMARY_OFFER)
 
     def _emit(self, state, actor, text, request_id=None):
         state["messages"].append({"id": uuid.uuid4().hex, "date": state["today"],
@@ -134,6 +166,8 @@ class AutopayDemo:
         req = state["requests"].get(request_id)
         if req and req["amount_cents"] is not None and req["payment_date"] and not self.external and text == self._prompt(req, family=actor == "family"):
             req["delivered_roles"] = sorted(set(req.get("delivered_roles", [])) | {actor})
+        idle = state.setdefault("idle", {"last_human_at": None, "offered": False, "awaiting": False})
+        idle["last_human_at"] = self._clock().isoformat()
 
     def _prompt(self, req, *, family=False):
         label = "[SIMULATED PAYMENT] "
@@ -283,6 +317,7 @@ class AutopayDemo:
     def tick(self):
         with self._transaction() as (_, state):
             self._tick(state)
+            self._maybe_offer_summary(state)
 
     def advance(self, days: int = 1):
         if type(days) is not int or not 1 <= days <= 31:
@@ -323,8 +358,28 @@ class AutopayDemo:
             self._tick(state)
             state["messages"].append({"id": uuid.uuid4().hex, "date": state["today"], "actor": actor,
                                       "direction": "in", "body": text, "delivery": "received"})
+            idle = state.setdefault("idle", {"last_human_at": None, "offered": False, "awaiting": False})
+            idle["last_human_at"] = self._clock().isoformat()
+            if actor == "senior" and asks_for_summary(text):
+                idle["offered"] = True
+                idle["awaiting"] = False
+                self._event(state, "summary", "She asked for a recap.")
+                self._emit(state, "senior", self._recap(state))
+                return True
             normalized = re.sub(r"[.!?,]+$", "", " ".join(text.lower().split()))
             match = re.fullmatch(r"(.+?)\s+([a-f0-9]{8})", normalized)
+            if idle.get("awaiting") and actor == "senior" and match is None:
+                if normalized in {"yes", "yes please", "yeah", "ok", "okay", "sure"}:
+                    idle["awaiting"] = False
+                    self._event(state, "summary", "She asked for a recap.")
+                    self._emit(state, "senior", self._recap(state))
+                    return True
+                if normalized in {"no", "no thanks"}:
+                    idle["awaiting"] = False
+                    self._event(state, "summary", "She did not want a recap.")
+                    self._emit(state, "senior", "Okay.")
+                    return True
+                idle["awaiting"] = False
             command, ref = (match.group(1), match.group(2).upper()) if match else (normalized, request_id)
             req = state["requests"].get(ref)
             yes = command in ({"yes", "yes please", "yeah go ahead", "ok go ahead"} if actor == "senior" else {"approve", "yes"})

@@ -84,6 +84,46 @@ def create_biller(database: str | Path, token: str, *, as_of: date | None = None
             row = db.execute("SELECT * FROM invoices WHERE id=?", (invoice_id,)).fetchone()
         return (jsonify(simulation=True, invoice=dict(row)) if row else (jsonify(error="Invoice not found"), 404))
 
+    @app.post("/v1/invoices")
+    def create_invoice():
+        body = request.get_json(silent=True)
+        fields = {"customer_ref", "payee", "amount_cents", "currency", "due_date"}
+        if not isinstance(body, dict) or set(body) != fields:
+            return jsonify(error="Use customer_ref, payee, amount_cents, currency, due_date"), 400
+        if (not isinstance(body["customer_ref"], str) or not body["customer_ref"]
+                or len(body["customer_ref"]) > 80
+                or not isinstance(body["payee"], str) or not body["payee"].strip()
+                or len(body["payee"]) > 80 or body["currency"] != "USD"
+                or type(body["amount_cents"]) is not int or body["amount_cents"] <= 0):
+            return jsonify(error="Invalid invoice"), 400
+        try:
+            due = date.fromisoformat(body["due_date"]).isoformat()
+        except (TypeError, ValueError):
+            return jsonify(error="Use an ISO due date"), 400
+        payee = body["payee"].strip()
+        customer = body["customer_ref"]
+        db = connect()
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT * FROM invoices WHERE customer_ref=? AND lower(trim(payee))=lower(?) "
+                "AND status='unpaid' ORDER BY due_date,id",
+                (customer, payee)).fetchone()
+            if existing:
+                db.execute(
+                    "UPDATE invoices SET payee=?, amount_cents=?, due_date=?, version=version+1 WHERE id=?",
+                    (payee, body["amount_cents"], due, existing["id"]))
+                row = db.execute("SELECT * FROM invoices WHERE id=?", (existing["id"],)).fetchone()
+            else:
+                invoice_id = "inv-" + uuid.uuid4().hex
+                db.execute("INSERT INTO invoices VALUES (?,?,?,?,?,?,?,?)", (
+                    invoice_id, customer, payee, body["amount_cents"], "USD", due, 1, "unpaid"))
+                row = db.execute("SELECT * FROM invoices WHERE id=?", (invoice_id,)).fetchone()
+            db.commit()
+        finally:
+            db.close()
+        return jsonify(simulation=True, invoice=dict(row)), 201
+
     @app.get("/v1/payments")
     def all_payments():
         with connect() as db:
