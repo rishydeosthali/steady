@@ -27,6 +27,9 @@ NOT_AVAILABLE = ("I can answer questions about your account. "
 PAY_NOT_ON = ("I can look up your bills and balance. "
               "Paying is not turned on yet.")
 CANT_SEE_ACCOUNT = "I can't see your account right now. Please try again later."
+CANT_SEE_BALANCE = "I can't see your balance right now, so I can't check that."
+ASK_AMOUNT = "How much would it be?"
+ASK_PAYEE = "Who would it be paid to?"
 TROUBLE = "I'm having trouble right now. Please try again in a minute."
 
 _SYSTEM = """You write WhatsApp replies for Steady, a helper for an older adult named Margaret.

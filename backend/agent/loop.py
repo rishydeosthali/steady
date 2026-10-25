@@ -15,18 +15,19 @@ import logging
 from ..nessie.client import CustomerNotFound, NessieClient, NessieError
 from . import reply
 from .facts import gather_facts
-from .intent import ParsedIntent, parse_intent
+from .intent import ParsedIntent, parse_amount_cents, parse_intent
 from .llm import LLM, LLMError
 
 log = logging.getLogger(__name__)
 
 
 class Agent:
-    def __init__(self, llm: LLM, nessie: NessieClient, customer_first_name: str, *, payments=None):
+    def __init__(self, llm: LLM, nessie: NessieClient, customer_first_name: str, *, payments=None, watcher=None):
         self._llm = llm
         self._nessie = nessie
         self._customer = customer_first_name
         self._payments = payments
+        self._watcher = watcher
 
     def respond(self, body: str, *, message_id: str = "") -> list[str]:
         """Turn one inbound text into the reply texts to send, in order.
@@ -51,8 +52,30 @@ class Agent:
             return self._answer_question(body, parsed)
         if parsed.intent == "pay_request":
             return [reply.PAY_NOT_ON]                  # never pays
+        if parsed.intent == "contemplate":
+            return self._contemplate(body, parsed)
         # yes / no / undo / forwarded_message: recognised, not handled in this slice.
         return [reply.NOT_AVAILABLE]
+
+    def _contemplate(self, body: str, parsed: ParsedIntent) -> list[str]:
+        """"What if I spend $X at Y?" Code parses X; the judge decides; nothing is stored."""
+        amount_cents = parse_amount_cents(body)
+        if amount_cents is None:
+            return [reply.ASK_AMOUNT]
+        merchant = parsed.merchant
+        if not merchant or merchant.casefold() not in body.casefold():
+            return [reply.ASK_PAYEE]
+        if self._watcher is None:
+            return [reply.NOT_AVAILABLE]
+        try:
+            result = self._watcher.check(merchant, amount_cents)
+        except CustomerNotFound as exc:
+            log.error("%s", exc)
+            return [reply.CANT_SEE_ACCOUNT]
+        except NessieError as exc:
+            log.error("Nessie unavailable: %s", exc)
+            return [reply.CANT_SEE_ACCOUNT]
+        return [result["text"] or reply.CANT_SEE_BALANCE]
 
     def _answer_question(self, body: str, parsed: ParsedIntent) -> list[str]:
         external = []

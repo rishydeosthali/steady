@@ -110,22 +110,55 @@ Set `PUBLIC_BASE_URL` to that exact HTTPS origin in `.env` and restart Terminal
 `https://<host>/whatsapp/status`, POST. Rishy's existing webhook-registration
 helper and signature validation still apply.
 
+## Caregiver approval
+
+Every payment needs two approvals: the senior's reply to the exact proposal,
+then the caregiver's decision by email. Set these in `.env`:
+
+- `GMAIL_ADDRESS` and `GMAIL_APP_PASSWORD`: the Gmail account that sends the
+  request, using a Google app password (spaces are ignored).
+- `CAREGIVER_EMAIL`, and optionally `CAREGIVER_NAME` for the senior's messages.
+- `STEADY_APPROVAL_BASE_URL`: the origin the email links open. It defaults to
+  `PUBLIC_BASE_URL`, then `http://127.0.0.1:5000` (works only on this machine).
+  Use the tunnel origin so the caregiver can approve from a phone.
+
+The email and the approval page show only payee, amount, and payment date,
+never the balance, deposits, or cushion. Opening a link only shows the request;
+Approve and Deny are buttons (POST), so mail scanners that prefetch links cannot
+decide. Each request has its own random link, stored only as a hash.
+
+| Situation | Result |
+| --- | --- |
+| Senior says YES | Caregiver is emailed; senior hears approval is pending |
+| Caregiver approves on or before the planned date | Payment runs on that date after a fresh funds check |
+| Caregiver denies | Nothing is paid; senior is told |
+| Caregiver never answers | Stays pending; senior is reminded on the planned date; expires after the due date |
+| Caregiver approves after the planned date | Held; nothing is paid |
+| Senior says NO before submission | Cancelled, even while the caregiver is deciding |
+| Email fails 5 times | Senior is told it is on hold; nothing is paid |
+
 ## Demo script
 
 1. Open the external utility page: all invoices start **unpaid**.
 2. From the configured senior's joined WhatsApp phone, text **HI** to open the
    session. This is rehearsal preparation, not payment consent.
 3. Within the monitor's ten-second polling interval, Steady reads the utility
-   invoices and Nessie funds, then sends the exact proposal:
-   `$120.00 to Austin Energy on <date>`, due in three days, keeping a $200 buffer.
-4. Reply **YES ABCD1234**, using the actual reference in the message. There is
-   one current read-back. A vague yes or forwarded text cannot choose a payment.
-5. If the proposed date is today, execution happens automatically after the
-   reply. Otherwise it runs when the scheduler reaches the agreed date.
-6. Watch the **separate utility page** change Austin Energy to **paid** and
+   invoices and Nessie funds, then sends the proposal, for example: “Your
+   $120.00 Austin Energy bill is due Wednesday, Oct 28. I recommend paying it
+   today, so you keep at least $200.00 in your account. Would you like me to
+   schedule it? Reply YES or NO.” When a pending deposit is what makes a later
+   date safe, it says “after your deposit arrives”.
+4. Reply **YES**. A bare yes counts only when exactly one proposal is waiting;
+   **YES ABCD1234** with the reference always works. Forwarded text or extra
+   words cannot choose a payment.
+5. The caregiver receives the approval email. Click **Approve**, then press the
+   **Approve** button on the page that opens.
+6. If the proposed date is today, execution happens right after approval.
+   Otherwise it runs when the scheduler reaches the agreed date.
+7. Watch the **separate utility page** change Austin Energy to **paid** and
    display its receipt. Steady confirms with that same receipt id.
-7. Retry the same reply. The utility still has one payment and one receipt.
-8. Ask “What bills do I have?” The agent reads the external utility's statuses
+8. Retry the same reply or approval. The utility still has one payment and one receipt.
+9. Ask “What bills do I have?” The agent reads the external utility's statuses
    in this mode and labels them as simulation records. Balance/deposit questions
    continue using Nessie, whose balance is unchanged by simulated settlement.
 
@@ -150,8 +183,8 @@ It does **not** credit a pending Nessie deposit: fresh Nessie balance must show
 settled funds or execution is held. Pending income can inform future planning,
 but same-day pending income is never treated as cleared cash.
 
-To cancel a future approved schedule, reply **CANCEL ABCD1234** before its
-payment date. A request already sent with an uncertain outcome stays in
+To cancel, reply **NO** or **CANCEL** (add the reference if more than one
+payment is open) any time before submission. A request already sent with an uncertain outcome stays in
 reconciliation; cancel cannot falsely promise that an accepted payment vanished.
 
 For a fresh demo cycle, use a new `--db` for the utility service and a new
@@ -175,16 +208,17 @@ form or a real utility site. Keep the demo token on your authorized test systems
 
 - All decisions still enter through Twilio's validated signature and the
   configured senior phone. Payment mode ignores `ALLOW_ANY_SENDER` and requires
-  a nonempty MessageSid. Only exact literal approval + reference is actionable;
-  the model cannot invent payees, amounts, dates, or invoke payment URLs.
+  a nonempty MessageSid. Only a literal YES/NO (with a reference, or bare when
+  exactly one decision is open) that agrees with the model's intent label is
+  actionable; the model cannot invent payees, amounts, dates, or invoke payment URLs.
 - The complete read-back must be sent before consent. Consent expires after
   the next simulated date or the deadline, whichever comes first.
 - The $200 buffer is checked at planning and again immediately before HTTP
   submission. Other known obligations are reserved; exact matching bank/biller
   bill triples are deduplicated. Forecast horizon is capped at 90 days and does
   not invent unlisted future spending.
-- New payees and amounts at or above $500 are held. This integration does not
-  implement the family review UI/phone; a senior yes cannot bypass that gate.
+- New payees and amounts above $5,000 are held. Every other payment still needs
+  the caregiver's emailed approval; a senior yes alone never pays.
 - Outside an open WhatsApp session, the full read-back stays queued. Optional
   `BILLER_WAKE_TEMPLATE_SID` must be an approved **no-variable generic invitation
   to reply HI**, not the existing appointment template. Without it, send HI

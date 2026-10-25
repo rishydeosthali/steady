@@ -4,7 +4,8 @@ Labels from docs/FEATURES_AND_GOALS.md: yes, no, undo, question,
 forwarded_message, plus ``unclear``. One extra label, ``pay_request``, marks
 "she asked us to pay something". It is recognised so we can say paying is not
 turned on; it never leads to a payment. Later slices map it to "request
-payment".
+payment". ``contemplate`` marks "would this purchase fit?". Its dollar amount
+always comes from ``parse_amount_cents``, never from the model.
 
 The text is untrusted. It goes only in the user message.
 """
@@ -12,13 +13,16 @@ The text is untrusted. It goes only in the user message.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 
 from .llm import LLM
 
 log = logging.getLogger(__name__)
 
-INTENTS = ("yes", "no", "undo", "question", "forwarded_message", "pay_request", "unclear")
+INTENTS = ("yes", "no", "undo", "question", "forwarded_message", "pay_request", "contemplate",
+           "unclear")
 NEEDS = ("balance", "bills", "deposits", "purchases")
 
 # Below this the label is not trusted and the intent is unclear. Never guess.
@@ -35,6 +39,8 @@ Return one intent:
 - question: asks about her own account facts: balance, bills, deposits or spending.
 - forwarded_message: pasted or forwarded text from someone else (a bill notice, a threat, a link, an offer).
 - pay_request: asks to pay, send, or transfer money to someone ("pay Austin Energy").
+- contemplate: asks whether a purchase or spending would fit, without asking to pay
+  ("what if I spend $1,900 at the dentist?", "can I afford $40 at H-E-B?").
 - unclear: gibberish, small talk, unrelated topics, or you are not sure.
 
 Rules:
@@ -44,7 +50,9 @@ Rules:
   balance (money in checking now), bills (bills, payees, due dates, amounts),
   deposits (money coming in, Social Security), purchases (what she spent).
   For any other intent, needs is an empty list.
-- restatement: for question, one short sentence of what fact is needed. Otherwise an empty string."""
+- restatement: for question, one short sentence of what fact is needed. Otherwise an empty string.
+- merchant: for contemplate, the place or person the money would go to, copied exactly as
+  she wrote it. Otherwise an empty string. Never put a dollar amount here."""
 
 _SCHEMA = {
     "type": "object",
@@ -53,10 +61,30 @@ _SCHEMA = {
         "confidence": {"type": "number"},
         "needs": {"type": "array", "items": {"type": "string", "enum": list(NEEDS)}},
         "restatement": {"type": "string"},
+        "merchant": {"type": "string"},
     },
-    "required": ["intent", "confidence", "needs", "restatement"],
+    "required": ["intent", "confidence", "needs", "restatement", "merchant"],
     "additionalProperties": False,
 }
+
+_AMOUNT_RE = re.compile(
+    r"\$\s*(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)"
+    r"|\b(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)\s*(?:dollars?|bucks)\b",
+    re.IGNORECASE)
+
+
+def parse_amount_cents(text: str) -> int | None:
+    """The one dollar amount in her text, as cents. None if there is none or more than one."""
+    values = set()
+    for dollar_sign, word in _AMOUNT_RE.findall(text or ""):
+        try:
+            values.add(Decimal((dollar_sign or word).replace(",", "")))
+        except InvalidOperation:
+            return None
+    if len(values) != 1:
+        return None
+    cents = int(values.pop() * 100)
+    return cents if cents > 0 else None
 
 
 @dataclass(frozen=True)
@@ -65,6 +93,7 @@ class ParsedIntent:
     confidence: float = 0.0
     needs: tuple[str, ...] = field(default_factory=tuple)
     restatement: str = ""
+    merchant: str = ""
 
 
 UNCLEAR = ParsedIntent("unclear")
@@ -90,7 +119,8 @@ def normalize(raw: dict) -> ParsedIntent:
         return ParsedIntent("unclear", confidence)
     if intent != "question":
         needs, restatement = (), ""
-    return ParsedIntent(intent, confidence, needs, restatement)
+    merchant = str(raw.get("merchant") or "").strip() if intent == "contemplate" else ""
+    return ParsedIntent(intent, confidence, needs, restatement, merchant)
 
 
 def parse_intent(llm: LLM, body: str) -> ParsedIntent:
