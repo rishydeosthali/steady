@@ -1,0 +1,19 @@
+# Secrets and local environments
+.env
+.env.*
+!.env.example
+!.env.*.example
+.venv/
+venv/
+
+# Dependencies and build output
+node_modules/
+dist/
+build/
+__pycache__/
+*.py[cod]
+
+# Local workspace artifacts
+.DS_Store
+/work/
+/outputs/
