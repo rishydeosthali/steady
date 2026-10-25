@@ -11,6 +11,8 @@ node_modules/
 dist/
 build/
 __pycache__/
+.pytest_cache/
+.tools/
 *.py[cod]
 
 # Local workspace artifacts
