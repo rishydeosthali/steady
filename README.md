@@ -126,6 +126,25 @@ python -m pytest
 
 Tests use dummy credentials and fakes. They need no network and no `.env`.
 
+## Automatic bill-payment rehearsal
+
+Run the complete simulated flow with no API credentials:
+
+```sh
+python -m scripts.autopay_demo
+```
+
+Open `http://127.0.0.1:5010` and enter the demo token printed in the terminal.
+Click **Yes**, then **+1 day** twice: expected income settles, a $120 bill is
+paid once in the **local synthetic ledger**, and a confirmation appears.
+Auto-play, cancellation, family approvals, delayed income, and reset are included.
+
+For real phone interaction, the same runner supports `--whatsapp` with locally
+configured Twilio credentials and a signed public webhook. Money remains
+simulated; it does not write to live Nessie or pay a utility. Rishy's original
+read-only server is a separate entry point and remains unchanged.
+See [the autopayment guide](docs/AUTOPAY_DEMO.md) for exact setup and boundaries.
+
 ## Synthetic bill data
 
 Four fictional fixed-income profiles and fifteen repeatable scenarios are

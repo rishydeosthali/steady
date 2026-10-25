@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Steady · Payment rehearsal</title>
+  <link rel="stylesheet" href="/static/autopay.css">
+  <script src="/static/autopay.js" defer></script>
+</head>
+<body>
+  <main>
+    <header class="masthead"><div><div class="wordmark">steady<span>●</span></div><p>One decision. A little more peace of mind.</p></div><span class="pill">SIMULATED BANK · NO REAL MONEY</span></header>
+    <section id="access" class="access panel">
+      <div><p class="eyebrow">PAYMENT REHEARSAL</p><h1>A bill is coming.<br>Steady takes it from here.</h1><p>Enter the demo access token printed in your terminal to open the two-phone simulator and see the decisions behind each payment.</p></div>
+      <form id="access-form"><label for="token">Demo access token</label><input id="token" type="password" autocomplete="off" required placeholder="Paste the token from your terminal"><button type="submit">Open rehearsal →</button></form>
+    </section>
+    <p id="error" role="alert" hidden></p>
+    <div id="workspace" hidden>
+      <section class="intro"><div><p class="eyebrow">PAYMENT REHEARSAL</p><h1>Ahead of the bill.<br>On your side.</h1><p id="scenario">Approve once. Watch the date arrive and the simulated payment happen automatically.</p></div><div class="date-card"><span>Demo date</span><strong id="today">—</strong><small id="channel">Local phone simulator</small></div></section>
+      <section class="metrics"><div class="panel"><span>Available in checking</span><strong id="balance">—</strong><small>Simulated settled balance</small></div><div class="panel"><span>Protected cushion</span><strong id="buffer">—</strong><small>Rechecked before every payment</small></div><div class="panel"><span>Payments recorded</span><strong id="paid">0</strong><small>One receipt per approved bill</small></div></section>
+      <section class="controls panel"><div><strong>Move the story forward</strong><small id="clock-label">Dates paused · bill checks continue in the background</small></div><div class="button-row"><button data-action="check" class="secondary">Check bills</button><button data-action="advance">+1 day</button><button data-action="auto" class="secondary" id="auto">Auto-play</button><button data-action="delay-income" class="secondary">Delay income</button><button data-action="reset" class="quiet">Reset</button></div></section>
+      <section class="phones">
+        <article class="phone panel"><div class="phone-head"><span class="avatar">M</span><div><h2 id="senior-name">Margaret</h2><small id="senior-mode">Your conversation with Steady</small></div><span class="live-dot"></span></div><div id="senior-messages" class="messages" aria-live="polite"></div><div class="quick-replies"><button data-actor="senior" data-text="Yes">Yes</button><button class="secondary" data-actor="senior" data-text="No">No</button><button class="secondary" data-actor="senior" data-text="Cancel">Cancel payment</button></div><form data-form-actor="senior" class="compose"><input name="message" aria-label="Senior message" placeholder="Try “Yes” or ask for your balance" maxlength="2000" required><button aria-label="Send senior message">↑</button></form></article>
+        <article class="phone panel"><div class="phone-head"><span class="avatar family">S</span><div><h2 id="family-name">Sarah</h2><small>Trusted person · flagged items only</small></div><span class="live-dot"></span></div><div id="family-messages" class="messages" aria-live="polite"></div><div class="quick-replies"><button data-actor="family" data-text="Approve">Approve</button><button class="secondary" data-actor="family" data-text="Deny">Deny</button></div><form data-form-actor="family" class="compose"><input name="message" aria-label="Trusted person message" placeholder="Reply to a flagged payment" maxlength="2000" required><button aria-label="Send trusted person message">↑</button></form></article>
+      </section>
+      <section class="panel details"><div class="section-head"><div><p class="eyebrow">THE MONEY STAYS IN CODE</p><h2>Every decision, visible.</h2></div><span class="pill" id="requests-count">0 requests</span></div><div class="table-wrap"><table><thead><tr><th>Bill / reference</th><th>Amount</th><th>Due</th><th>Proposed payment</th><th>Status</th></tr></thead><tbody id="requests"></tbody></table></div><div class="audit-grid"><div><h3>Agent activity</h3><ol id="events" class="events"></ol></div><div><h3>Simulated bank ledger</h3><ol id="ledger" class="events"></ol></div></div></section>
+      <footer>This rehearsal uses a persistent local ledger with Nessie-shaped fictional data. It does not pay a utility or write to the real Nessie sandbox. In WhatsApp mode, messages are real; money remains simulated.</footer>
+    </div>
+  </main>
+</body>
+</html>

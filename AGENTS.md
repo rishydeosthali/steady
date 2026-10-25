@@ -53,5 +53,10 @@ Nessie client. Run `python -m pytest`; tests use fakes and need no credentials.
 Inspect current files before assuming payment/monitoring features are built.
 Synthetic data usage and its limits are in `docs/SYNTHETIC_DATA.md`; validate
 the authored fixtures with `python -m scripts.demo_data validate`.
+The separate `python -m scripts.autopay_demo` runner implements simulated
+payment automation in a durable local ledger. It never writes to real Nessie;
+optional `--whatsapp` enables real messaging only. Read `docs/AUTOPAY_DEMO.md`
+before extending its scheduler, approvals, or transport. Preserve the original
+read-only app boundary unless a task explicitly asks to integrate it.
 For money-related code, test deterministic forecasting, buffer enforcement,
 approval state transitions, duplicate delivery/retries, and cancellation.

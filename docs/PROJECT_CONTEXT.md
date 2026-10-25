@@ -101,4 +101,12 @@ areas, not a change to the number of teammates or assigned individual owners.
 
 See `SYNTHETIC_DATA.md` for four fictional profiles, fifteen scenario expectations,
 and integration commands. Fixtures support the current account-question flow;
-their future money-action expectations do not imply those features are built.
+their future money-action expectations do not imply every feature is built.
+
+Andrew's subsequent `scripts.autopay_demo` adds a separate persistent synthetic
+automation runner: three-day outreach, exact approval references, optional
+family approval, cancellation, an accelerated clock, and atomic local settlement.
+It can use real Twilio WhatsApp via a signed webhook; the default is a two-phone
+local simulator. It never writes to live Nessie. Rishy's original read-only app
+and money-contract stubs remain unchanged. See `AUTOPAY_DEMO.md` for setup and
+the remaining live-banking integration boundary.
