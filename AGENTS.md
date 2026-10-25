@@ -58,5 +58,10 @@ payment automation in a durable local ledger. It never writes to real Nessie;
 optional `--whatsapp` enables real messaging only. Read `docs/AUTOPAY_DEMO.md`
 before extending its scheduler, approvals, or transport. Preserve the original
 read-only app boundary unless a task explicitly asks to integrate it.
+The current opt-in integration is `STEADY_EXTERNAL_BILLER=1` in the original
+`backend.app`: read `docs/EXTERNAL_BILLER.md` before changing it. Its separate
+`biller_simulator` accepts simulated funds over real HTTP and owns its own
+receipts/database. Nessie supplies reads only; never describe a biller receipt
+as a real Nessie debit. Run `tests/test_external_biller.py` for cross-process tests.
 For money-related code, test deterministic forecasting, buffer enforcement,
 approval state transitions, duplicate delivery/retries, and cancellation.

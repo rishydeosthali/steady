@@ -110,3 +110,16 @@ It can use real Twilio WhatsApp via a signed webhook; the default is a two-phone
 local simulator. It never writes to live Nessie. Rishy's original read-only app
 and money-contract stubs remain unchanged. See `AUTOPAY_DEMO.md` for setup and
 the remaining live-banking integration boundary.
+
+## External-biller integration (current recommended demo path)
+
+At Andrew's request, the next integration returns to Rishy's original
+`backend.app`/`Agent` flow rather than building on the standalone rehearsal.
+`biller_simulator` is a separate process, database, authenticated HTTP API, and
+invoice/receipt page. Opt-in `STEADY_EXTERNAL_BILLER=1` lets the original backend
+monitor its invoices, plan using real Nessie reads, accept an exact signed
+WhatsApp approval, and submit a simulated payment to that service. Provider
+idempotency and receipt lookup handle lost replies and restarts. No real bank
+debit is claimed; accepted demo spending is reserved in a local shadow budget.
+New/large payees remain held for future family review. See `EXTERNAL_BILLER.md`
+for Rishy's test/run instructions and the private `.env` migration note.

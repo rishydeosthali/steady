@@ -126,7 +126,29 @@ python -m pytest
 
 Tests use dummy credentials and fakes. They need no network and no `.env`.
 
-## Automatic bill-payment rehearsal
+## Recommended payment integration: external demo utility
+
+The original WhatsApp backend can now connect to an **independent biller API**
+with its own database and receipt page. Nessie supplies funds checks; a signed
+phone approval authorizes an HTTP request that marks a fictional utility invoice
+paid and returns a receipt. No real money moves and Nessie is not debited.
+
+If your previous checkout tracked `.env`, **save your local copy before pulling**;
+this change stops tracking that file. Restore it privately afterward.
+
+```sh
+python -m scripts.biller_demo init
+python -m biller_simulator        # terminal 1: provider on :5011
+python -m backend.app             # terminal 2: original Steady backend on :5000
+```
+
+Use the existing Twilio tunnel/webhook on port 5000. Open the provider page at
+`http://127.0.0.1:5011` to verify its invoices and receipts independently.
+See [Rishy's external-biller handoff](docs/EXTERNAL_BILLER.md) for the complete
+setup, phone script, remote hosting option, and tests. This path uses the
+original app and does not require the standalone rehearsal below.
+
+## Earlier standalone bill-payment rehearsal
 
 Run the complete simulated flow with no API credentials:
 

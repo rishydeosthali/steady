@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Demo Utility Company · External biller</title>
+  <link rel="stylesheet" href="/static/biller.css">
+  <script src="/static/biller.js" defer></script>
+</head>
+<body>
+  <main>
+    <header><div><p class="eyebrow">EXTERNAL SERVICE</p><h1>Demo Utility Company</h1></div><span class="badge">SIMULATION · NO REAL MONEY</span></header>
+    <p class="intro">This utility company has its own process, API, database, and receipts. Steady must send an approved payment over HTTP before an invoice changes here.</p>
+    <form id="connect"><label for="token">Biller API token</label><input type="password" id="token" autocomplete="off" required placeholder="BILLER_API_TOKEN from your local .env"><button>Connect</button></form>
+    <p id="error" role="alert" hidden></p>
+    <section id="data" hidden>
+      <div class="metrics"><article><span>Invoices paid</span><strong id="paid">0</strong></article><article><span>Accepted by this service</span><strong id="total">$0.00</strong></article><article><span>Customer</span><strong>Margaret · demo</strong></article></div>
+      <h2>Invoices</h2><div class="table"><table><thead><tr><th>Utility / invoice</th><th>Amount</th><th>Due date</th><th>Status</th></tr></thead><tbody id="invoices"></tbody></table></div>
+      <h2>Payment receipts</h2><div id="receipts"></div>
+    </section>
+    <footer>The provider's receipt is independent evidence that Steady called an external service. These are simulated payments. Nessie supplies the bank reads; it is not debited by this simulator.</footer>
+  </main>
+</body>
+</html>

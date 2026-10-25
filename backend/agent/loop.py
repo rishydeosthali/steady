@@ -3,8 +3,9 @@
 The LLM handles language (intent label, wording). Code handles money and
 facts (every Nessie read, every number in a reply).
 
-This slice is read-only. No branch here creates, cancels, or approves a
-payment, and ``backend.money.contracts`` is deliberately not imported.
+The default slice is read-only. Optional external-biller mode delegates exact
+consent to deterministic code; it never gives a language model a payment tool.
+``backend.money.contracts`` is deliberately not imported.
 """
 
 from __future__ import annotations
@@ -21,12 +22,13 @@ log = logging.getLogger(__name__)
 
 
 class Agent:
-    def __init__(self, llm: LLM, nessie: NessieClient, customer_first_name: str):
+    def __init__(self, llm: LLM, nessie: NessieClient, customer_first_name: str, *, payments=None):
         self._llm = llm
         self._nessie = nessie
         self._customer = customer_first_name
+        self._payments = payments
 
-    def respond(self, body: str) -> list[str]:
+    def respond(self, body: str, *, message_id: str = "") -> list[str]:
         """Turn one inbound text into the reply texts to send, in order.
 
         ``body`` is untrusted. It only ever reaches the model as a user message.
@@ -40,6 +42,9 @@ class Agent:
         log.info("intent=%s confidence=%.2f needs=%s", parsed.intent, parsed.confidence,
                  list(parsed.needs))
 
+        if self._payments is not None and parsed.intent in {"yes","no","undo","pay_request"}:
+            return self._payments.handle(body,parsed.intent,message_id)
+
         if parsed.intent == "unclear":
             return [reply.REASK]                       # no Nessie call
         if parsed.intent == "question":
@@ -50,6 +55,13 @@ class Agent:
         return [reply.NOT_AVAILABLE]
 
     def _answer_question(self, body: str, parsed: ParsedIntent) -> list[str]:
+        external = []
+        if self._payments is not None and "bills" in parsed.needs:
+            external = self._payments.bill_summary()
+            remaining = tuple(n for n in parsed.needs if n != "bills")
+            if not remaining:
+                return external
+            parsed = ParsedIntent(parsed.intent,parsed.confidence,remaining,parsed.restatement)
         try:
             account = self._nessie.resolve(self._customer)
             facts = gather_facts(self._nessie, account["_id"], parsed.needs)
@@ -61,4 +73,4 @@ class Agent:
             log.error("Nessie unavailable: %s", exc)
             return [reply.CANT_SEE_ACCOUNT]
 
-        return reply.write_answer(self._llm, body, parsed.restatement, facts, parsed.needs)
+        return external + reply.write_answer(self._llm, body, parsed.restatement, facts, parsed.needs)
