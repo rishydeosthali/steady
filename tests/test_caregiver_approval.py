@@ -49,6 +49,32 @@ def test_recommends_paying_after_deposit_and_caregiver_email_hides_balance(provi
     assert payments(client) == []
 
 
+def test_cosigner_alert_email_hides_balance():
+    built = []
+
+    class Capture:
+        def __enter__(self):
+            return self
+        def __exit__(self, *a):
+            return False
+        def starttls(self, context=None):
+            pass
+        def login(self, *a):
+            pass
+        def send_message(self, message):
+            built.append(message)
+
+    mailer = CaregiverMailer("steady@example.com", "abcd efgh ijkl mnop", "sarah@example.com",
+                             base_url="https://steady.example", smtp_factory=lambda: Capture())
+    mailer.notify("unexpected duplicate",
+                  {"merchant": "Dentist", "amount": "$120", "date": "Oct 24", "what_she_said": "No",
+                   "balance": "$700"}, "now")
+    body = built[0].get_body(("plain",)).get_content() + built[0].get_body(("html",)).get_content()
+    assert "Dentist" in body and "$120" in body and "Oct 24" in body
+    assert "$700" not in body
+    assert "No account balance is included" in body
+
+
 def test_bare_yes_applies_only_to_the_single_open_proposal(provider,tmp_path,settings):
     client,_ = provider
     service,_,_ = setup_service(tmp_path,settings,client)

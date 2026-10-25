@@ -20,7 +20,7 @@ class InlineExecutor(Executor):
 
 class RecordingTwilio(TwilioWhatsApp):
     def __init__(self, settings):
-        super().__init__(settings, client=object())
+        super().__init__(settings, client=object(), session_path=None)
         self.sent: list[tuple[str, str]] = []
 
     def send_reply(self, to, body):
@@ -108,10 +108,37 @@ def test_status_callback_bad_signature_is_403(settings):
 
 
 def test_free_form_refused_without_inbound_session(settings):
-    t = TwilioWhatsApp(settings, client=object())
+    t = TwilioWhatsApp(settings, client=object(), session_path=None)
     try:
         t.send_reply(MOM, "hi")
     except SessionClosed:
         pass
     else:
         raise AssertionError("free-form send must be refused with no open session")
+
+
+def test_session_survives_a_new_process_via_the_session_file(settings, tmp_path):
+    path = tmp_path / "sessions.json"
+    first = TwilioWhatsApp(settings, client=object(), session_path=path)
+    first.record_inbound(MOM)
+    second = TwilioWhatsApp(settings, client=object(), session_path=path)
+    assert second.session_open(MOM)
+    assert path.exists()
+
+
+def test_session_asks_twilio_after_a_restart_with_no_local_file(settings):
+    from datetime import datetime, timezone
+
+    class _Msg:
+        date_sent = None
+        date_created = datetime.now(timezone.utc)
+
+    class _Messages:
+        def list(self, **_kwargs):
+            return [_Msg()]
+
+    class _Client:
+        messages = _Messages()
+
+    t = TwilioWhatsApp(settings, client=_Client(), session_path=None)
+    assert t.session_open(MOM)

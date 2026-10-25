@@ -21,7 +21,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from ..nessie.client import NessieError
+from ..nessie.client import CustomerNotFound, NessieError
 from .caregiver import MailError, binding, new_token, token_hash
 from .client import BillerError
 from .money import cents, money
@@ -38,17 +38,34 @@ def day(iso):
     return f"{d:%A}, {d:%b} {d.day}"
 
 
+def _due(iso):
+    """'Oct 28' from a YYYY-MM-DD string. Empty if the date is missing."""
+    raw = str(iso or "")[:10]
+    if not raw:
+        return ""
+    try:
+        d = date.fromisoformat(raw)
+    except ValueError:
+        return raw
+    return f"{d:%b} {d.day}"
+
+
+def _payee_key(name):
+    return " ".join((name or "").casefold().split())
+
+
 class PaymentService:
     def __init__(self, database, biller, nessie, twilio, recipient, *, mailer, customer_name="Margaret",
                  customer_ref="demo-margaret", demo_date=None, buffer_cents=20000,
                  known_payees=("Austin Energy", "Water Co", "Spectrum"), wakeup=None,
-                 caregiver_name="your caregiver", max_cents=500000):
+                 caregiver_name="your caregiver", max_cents=500000, audit=None):
         if type(buffer_cents) is not int or buffer_cents < 0:
             raise ValueError("Protected buffer must be nonnegative integer cents")
         self.database, self.biller, self.nessie, self.twilio = str(database), biller, nessie, twilio
         self.recipient, self.customer_name, self.customer_ref = recipient, customer_name, customer_ref
         self.buffer, self.known_payees, self.wakeup = buffer_cents, set(known_payees), wakeup
         self.mailer, self.caregiver_name, self.max_cents = mailer, caregiver_name, max_cents
+        self.audit = audit
         Path(self.database).parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(self.database) as db:
             db.execute("CREATE TABLE IF NOT EXISTS state (id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL)")
@@ -83,8 +100,20 @@ class PaymentService:
         result["bank_writes"] = False
         return result
 
-    def _audit(self, state, event, job=None):
-        state["audit"].append({"date":self.today(state), "event":event, "request_id":job["id"] if job else None})
+    def _audit(self, state, event, job=None, reason=""):
+        reason = reason or event.replace("_", " ")
+        row = {"date": self.today(state), "event": event, "request_id": job["id"] if job else None,
+               "reason": reason}
+        if job:
+            row["payee"] = job.get("payee")
+        state["audit"].append(row)
+        if self.audit is not None:
+            kind = "receipt" if "receipt" in event else "decision"
+            self.audit.append(kind, reason, event=event, request_id=row["request_id"],
+                              payee=job.get("payee") if job else None,
+                              amount=money(job["amount_cents"]) if job and job.get("amount_cents") is not None else None,
+                              date=job.get("scheduled_for") if job else None,
+                              idempotency_key=job.get("idempotency_key") if job else None)
 
     def _emit(self, state, body, job=None, kind="notification"):
         state["outbox"].append({"id":uuid.uuid4().hex, "body":body, "kind":kind,
@@ -112,13 +141,36 @@ class PaymentService:
     def _bank(self, state):
         account = self.nessie.resolve(self.customer_name)
         settled = cents(self.nessie.get_balance(account["_id"]))
-        # Only accepted simulated payments consume the shadow budget. Nessie's
-        # actual reported balance is never overwritten or represented as debited.
-        spent = sum(j["amount_cents"] for j in state["jobs"].values()
-                    if j["status"] == "paid" and j["account_id"] == account["_id"])
-        return {"id":account["_id"], "available":settled-spent,
+        # Accepted simulated payments consume the shadow budget. Nessie itself
+        # is never written; Steady subtracts those payments when it answers.
+        return {"id":account["_id"], "available":settled-self._spent_cents(state,account["_id"]),
                 "bills":self.nessie.get_bills(account["_id"]),
                 "deposits":self.nessie.get_deposits(account["_id"])}
+
+    def _spent_jobs(self, state, account_id):
+        return [j for j in state["jobs"].values()
+                if j["status"] == "paid" and j.get("account_id") == account_id]
+
+    def _spent_cents(self, state, account_id):
+        return sum(j["amount_cents"] for j in self._spent_jobs(state, account_id))
+
+    def with_available_balance(self, account_id, facts):
+        """Replace a Nessie balance fact with the amount after paid demo bills."""
+        balance = facts.get("balance")
+        if not balance or balance.get("status") != "ok":
+            return facts
+        try:
+            settled = cents(self.nessie.get_balance(account_id))
+        except (NessieError, ValueError):
+            return facts
+        state = self.state()
+        paid = [{"payee":j["payee"], "amount":money(j["amount_cents"])}
+                for j in self._spent_jobs(state, account_id)]
+        updated = dict(facts)
+        updated["balance"] = {"status":"ok", "amount":money(max(0, settled-self._spent_cents(state, account_id)))}
+        if paid:
+            updated["balance"]["after_payments"] = paid
+        return updated
 
     def _safe(self, state, target, invoices, bank, proposed):
         today = date.fromisoformat(self.today(state))
@@ -192,9 +244,10 @@ class PaymentService:
         self._validate_receipt(job, receipt)
         if job["status"] != "paid":
             job["status"], job["receipt"] = "paid", receipt
-            self._audit(state,"external_receipt_confirmed",job)
+            self._audit(state,"external_receipt_confirmed",job,
+                        reason=f"Receipt {receipt['id']} for {job['payee']}.")
             self._emit(state, f"Done. {job['payee']} confirmed your {money(job['amount_cents'])} payment. "
-                       f"Receipt {receipt['id']}. (Demo biller; no real funds moved.)",job)
+                       f"Receipt {receipt['id']}.",job)
 
     def _approved(self, job):
         return (job["user_approved"] and job.get("caregiver_approved") is True
@@ -321,20 +374,45 @@ class PaymentService:
         refs = ", ".join(f"{j['payee']} (Ref {j['id']})" for j in open_jobs)
         return None, f"Which bill do you mean? {refs}. Reply with YES or NO and the reference."
 
+    def snapshot_jobs(self):
+        """Open payment jobs for the guide. Never includes a balance."""
+        return [{"id":j["id"], "payee":j["payee"], "amount":money(j["amount_cents"]),
+                 "date":j["scheduled_for"], "status":j["status"]}
+                for j in self.state()["jobs"].values()
+                if j["status"] in CANCELLABLE | {"held", "reconciling"}]
+
+    def hold_job(self, job_id):
+        return self._set_job(job_id, "held", CANCELLABLE, "senior_held",
+                             lambda job: f"Okay. I put the {job['payee']} payment on hold. Nothing was sent.")
+
+    def cancel_job(self, job_id):
+        return self._set_job(job_id, "cancelled", CANCELLABLE, "senior_cancelled",
+                             lambda job: f"Okay, I won't pay {job['payee']}. Nothing was sent.")
+
+    def _set_job(self, job_id, status, allowed, event, message):
+        if not isinstance(job_id, str) or not job_id.strip():
+            return False
+        with self._tx() as (_,state):
+            job = state["jobs"].get(job_id.strip().upper())
+            if job is None or job["status"] not in allowed:
+                return False
+            job["status"] = status
+            self._audit(state, event, job)
+            self._emit(state, message(job), job)
+            return True
+
     def handle(self, body, intent, sid):
         if not sid:
             return ["I need a signed phone reply with its message id before accepting a payment decision."]
         with self._tx() as (db,state):
-            if not db.execute("INSERT OR IGNORE INTO inbound VALUES(?)",(sid,)).rowcount:
-                return []
             match = REPLY_RE.fullmatch(body or "")
             saying_no = bool(match) and re.fullmatch(NO_WORDS, match.group(1), re.I) is not None
             if not match or (intent == "yes") == saying_no or intent not in {"yes","no","undo"}:
-                self._emit(state,"Please answer with just YES or NO. I won't act on anything else.")
-                return []
-            job, problem = self._pick(state, match.group(2), CANCELLABLE if saying_no else {"awaiting_user"})
+                return None
+            job, _problem = self._pick(state, match.group(2), CANCELLABLE if saying_no else {"awaiting_user"})
             if job is None:
-                self._emit(state,problem)
+                return None
+            if not db.execute("INSERT OR IGNORE INTO inbound VALUES(?)",(sid,)).rowcount:
                 return []
             today = self.today(state)
             if saying_no:
@@ -425,21 +503,71 @@ class PaymentService:
                        "done. Reply NO before then to cancel.",job)
             return self._caregiver_view(job), "Thank you. The payment is approved."
 
+    def record_external_bill(self, payee, amount_cents, due_date):
+        """Create or update the utility invoice after she confirms a photo."""
+        if type(amount_cents) is not int or amount_cents <= 0:
+            raise BillerError("Invalid bill amount")
+        try:
+            due = date.fromisoformat(str(due_date)[:10]).isoformat()
+        except (TypeError, ValueError) as exc:
+            raise BillerError("Invalid bill due date") from exc
+        invoice = self.biller.create_invoice(self.customer_ref, payee, amount_cents, due)
+        self.known_payees.add(str(invoice.get("payee") or payee).strip())
+        return invoice
+
+    def _account_bills(self):
+        """Upcoming bills already stored on the Nessie account, including photo saves."""
+        try:
+            account = self.nessie.resolve(self.customer_name)
+            return self.nessie.get_bills(account["_id"])
+        except (CustomerNotFound, NessieError, ValueError):
+            return None
+
     def bill_summary(self):
+        """Bills Margaret asked about: utility invoices plus any Nessie-only bills.
+
+        Photo-confirmed bills are written to Nessie. They have to show up here
+        the next time she asks, even when the utility company does not have them.
+        """
         try:
             invoices = self._invoices()
         except BillerError:
-            return ["I cannot read the demo utility's invoices right now. I will not guess their payment status."]
+            invoices = None
+        bank_bills = self._account_bills()
+        if invoices is None and bank_bills is None:
+            return ["I can't see your bills right now. Please try again later."]
         state = self.state()
-        jobs = {j["invoice_id"]:j for j in state["jobs"].values()}
+        jobs = {j["invoice_id"]: j for j in state["jobs"].values()}
         rows = []
-        for invoice in sorted(invoices,key=lambda b:(b["due_date"],b["id"])):
+        seen = set()
+        for invoice in sorted(invoices or [], key=lambda b: (b["due_date"], b["id"])):
             job = jobs.get(invoice["id"])
             receipt = job.get("receipt") if job else None
-            rows.append(f"{invoice['payee']}: {money(invoice['amount_cents'])}, due {invoice['due_date']}, "
-                        f"{invoice['status']} at the demo utility" + (f", receipt {receipt['id']}" if receipt else "") + ".")
-        return ["[SIMULATED BILLER] " + (" ".join(rows) or "No invoices found.") +
-                " These are the utility simulator's records; Nessie's bank balance is unchanged by these demo payments."]
+            status = "paid" if invoice["status"] == "paid" else "unpaid"
+            extra = f", receipt {receipt['id']}" if receipt else ""
+            when = _due(invoice["due_date"]) or invoice["due_date"]
+            rows.append(f"{invoice['payee']}: {money(invoice['amount_cents'])}, due {when}, "
+                        f"{status}{extra}.")
+            seen.add(_payee_key(invoice["payee"]))
+        for bill in bank_bills or []:
+            status = str(bill.get("status") or "").strip().lower()
+            if status in {"completed", "cancelled", "canceled"}:
+                continue
+            payee = str(bill.get("payee") or "").strip()
+            if not payee or _payee_key(payee) in seen:
+                continue
+            try:
+                amount = money(cents(bill.get("payment_amount")))
+            except ValueError:
+                continue
+            when = _due(bill.get("payment_date") or bill.get("upcoming_payment_date"))
+            shown = "paid" if status == "completed" else "unpaid"
+            rows.append(f"{payee}: {amount}, due {when}, {shown}." if when
+                        else f"{payee}: {amount}, {shown}.")
+            seen.add(_payee_key(payee))
+        if not rows:
+            return ["I don't see any bills."]
+        return ["Here are your bills: " + " ".join(rows)]
 
     def _send_caregiver_email(self, state, item, job):
         if job is None or job["status"] != "awaiting_caregiver":

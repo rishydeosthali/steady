@@ -1,7 +1,10 @@
-"""Nessie reads. GET only.
+"""Nessie reads, plus bill create/update.
 
 Plain functions the agent loop calls. The model never sees a URL and never
 picks one. Ids are discovered at runtime; nothing is hardcoded.
+
+Writes are only ``create_bill`` and ``update_bill``. They record an upcoming
+bill. They do not pay anyone. The model never calls them.
 
 Errors are sanitized: a ``requests`` exception message contains the full URL,
 which includes the API key, so it is never propagated or logged.
@@ -47,20 +50,37 @@ class NessieClient:
 
     # -- transport -------------------------------------------------------
 
-    def _get(self, path: str) -> Any:
+    def _request(self, method: str, path: str, body: dict[str, Any] | None = None) -> Any:
         try:
-            resp = self._session.get(f"{self._base}{path}", params={"key": self._key},
-                                     timeout=self._timeout)
+            if method == "GET":
+                resp = self._session.get(f"{self._base}{path}", params={"key": self._key},
+                                         timeout=self._timeout)
+            else:
+                resp = self._session.request(
+                    method, f"{self._base}{path}", params={"key": self._key},
+                    json=body, timeout=self._timeout)
         except requests.RequestException as exc:
-            raise NessieError(f"GET {path} failed: {type(exc).__name__}") from None
+            raise NessieError(f"{method} {path} failed: {type(exc).__name__}") from None
         if resp.status_code == 404:
-            raise NessieNotFound(f"GET {path} returned 404")
+            raise NessieNotFound(f"{method} {path} returned 404")
         if not resp.ok:
-            raise NessieError(f"GET {path} returned HTTP {resp.status_code}")
+            raise NessieError(f"{method} {path} returned HTTP {resp.status_code}")
+        if resp.status_code == 204 or not getattr(resp, "content", b"x"):
+            return None
         try:
             return resp.json()
         except ValueError:
-            raise NessieError(f"GET {path} returned non-JSON") from None
+            raise NessieError(f"{method} {path} returned non-JSON") from None
+
+    def _get(self, path: str) -> Any:
+        return self._request("GET", path)
+
+    def _created(self, payload: Any) -> dict[str, Any]:
+        if isinstance(payload, dict) and isinstance(payload.get("objectCreated"), dict):
+            return payload["objectCreated"]
+        if isinstance(payload, dict) and payload.get("_id"):
+            return payload
+        raise NessieError("create response had an unexpected shape")
 
     # -- discovery -------------------------------------------------------
 
@@ -107,6 +127,17 @@ class NessieClient:
 
     def get_bills(self, account_id: str) -> list[dict[str, Any]]:
         return self._list(f"/accounts/{account_id}/bills")
+
+    def create_bill(self, account_id: str, bill: dict[str, Any]) -> dict[str, Any]:
+        """POST /accounts/{id}/bills. Records a bill. Does not pay it."""
+        return self._created(self._request("POST", f"/accounts/{account_id}/bills", bill))
+
+    def update_bill(self, bill_id: str, bill: dict[str, Any]) -> dict[str, Any]:
+        """PUT /bills/{id}. Updates a bill. Does not pay it."""
+        payload = self._request("PUT", f"/bills/{bill_id}", bill)
+        if isinstance(payload, dict) and payload.get("_id"):
+            return payload
+        return {"_id": bill_id, **bill}
 
     def get_deposits(self, account_id: str) -> list[dict[str, Any]]:
         return self._list(f"/accounts/{account_id}/deposits")

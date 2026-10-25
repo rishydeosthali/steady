@@ -74,6 +74,9 @@ class FakeMailer:
             raise MailError("Caregiver email failed: SMTPServerDisconnected")
         self.sent.append((payment,token))
 
+    def notify(self,reason,details,urgency="soon"):
+        self.sent.append(({"reason":reason,"details":details,"urgency":urgency},None))
+
     @property
     def token(self):
         return self.sent[-1][1]
@@ -171,8 +174,14 @@ def test_original_signed_whatsapp_flow_reaches_independent_biller(provider,tmp_p
     assert bank.balance == 2213  # no pretend Nessie debit
     llm.intent = {"intent":"question","confidence":0.99,"needs":["bills"],"restatement":"bill status"}
     summary = Agent(llm,bank,"Margaret",payments=service).respond("Did you pay my bill?")
-    assert "paid at the demo utility" in summary[0] and updated["receipt"]["id"] in summary[0]
-    assert "bank balance is unchanged" in summary[0]
+    assert "Austin Energy" in summary[0] and "paid" in summary[0] and updated["receipt"]["id"] in summary[0]
+    assert "demo" not in summary[0].casefold() and "simulated" not in summary[0].casefold()
+    assert "simulator" not in summary[0].casefold()
+    llm.intent = {"intent":"question","confidence":0.99,"needs":["balance"],"restatement":"checking balance"}
+    llm.reply = {"messages": []}
+    balance = Agent(llm,bank,"Margaret",payments=service).respond("What's my balance?")
+    assert balance == ["Your checking balance is $2,093.00, after paying $120.00 to Austin Energy."]
+    assert bank.balance == 2213
 
 
 def test_lost_http_response_reconciles_without_second_payment(provider,tmp_path,settings):
@@ -337,6 +346,22 @@ def test_future_execution_succeeds_only_when_fresh_nessie_balance_reflects_incom
     assert client.receipt(job(service)["idempotency_key"])["simulation_date"] == "2026-10-26"
 
 
+def test_available_balance_ignores_unpaid_and_subtracts_paid(provider,tmp_path,settings):
+    client,_ = provider
+    service,bank,_ = setup_service(tmp_path,settings,client)
+    facts = {"balance":{"status":"ok","amount":"$2,213.00"}}
+    account_id = bank.resolve("Margaret")["_id"]
+    waiting = service.with_available_balance(account_id, facts)
+    assert waiting["balance"]["amount"] == "$2,213.00"
+    assert "after_payments" not in waiting["balance"]
+    approve(service)
+    service.tick()
+    paid = service.with_available_balance(account_id, facts)
+    assert paid["balance"]["amount"] == "$2,093.00"
+    assert paid["balance"]["after_payments"] == [{"payee":"Austin Energy","amount":"$120.00"}]
+    assert bank.balance == 2213
+
+
 def test_accepted_simulated_payments_are_reserved_against_unchanged_bank_balance(provider,tmp_path,settings):
     client,_ = provider
     service,bank,_ = setup_service(tmp_path,settings,client)
@@ -369,3 +394,64 @@ def test_opt_in_original_app_factory_registers_payment_controls_without_endpoint
     assert app.extensions["external_payments"] is service
     assert app.test_client().get("/demo/payments",headers={"Authorization":"Bearer "+CONTROL_TOKEN}).status_code == 200
     assert "/whatsapp/status" in {rule.rule for rule in app.url_map.iter_rules()}
+
+
+def test_provider_records_and_updates_a_photo_invoice(provider):
+    client, _ = provider
+    created = client.create_invoice("demo-margaret", "Crawford Electric Cooperative", 11800, "2027-05-15")
+    assert created["payee"] == "Crawford Electric Cooperative"
+    assert created["amount_cents"] == 11800
+    assert created["due_date"] == "2027-05-15"
+    assert created["status"] == "unpaid"
+    assert any(b["id"] == created["id"] for b in client.invoices("demo-margaret"))
+    updated = client.create_invoice("demo-margaret", "Crawford Electric Cooperative", 11900, "2027-05-16")
+    assert updated["id"] == created["id"]
+    assert updated["amount_cents"] == 11900
+    assert updated["due_date"] == "2027-05-16"
+    assert updated["version"] == created["version"] + 1
+
+
+def test_bill_summary_includes_nessie_bills_and_does_not_say_demo(provider, tmp_path, settings):
+    client, _ = provider
+    service, bank, _ = setup_service(tmp_path, settings, client)
+    bank.bills.append({
+        "_id": "bill-crawford", "payee": "Crawford Electric Cooperative",
+        "payment_amount": 118.0, "payment_date": "2027-05-15", "status": "pending",
+    })
+    text = service.bill_summary()[0]
+    assert "Crawford Electric Cooperative" in text and "$118.00" in text and "May 15" in text
+    assert "Austin Energy" in text and "Water Co" in text and "Spectrum" in text
+    assert "demo" not in text.casefold() and "simulated" not in text.casefold()
+    assert "simulator" not in text.casefold()
+
+
+def test_photo_yes_writes_nessie_so_later_bill_list_includes_it(provider, tmp_path, settings):
+    from backend.agent.photo import PhotoIntake
+    from tests.test_photo import CLOCK, MEDIA, PNG, photo_llm
+
+    client, _ = provider
+    bank = FakeNessie(balance=2213, bills=[])
+    service, bank, _ = setup_service(tmp_path, settings, client, bank)
+    llm = photo_llm(payee="Crawford Electric Cooperative", amount="$118.00", due_date="May 15")
+    photos = PhotoIntake(llm, bank, "Margaret", fetch=lambda url: (PNG, "image/jpeg"),
+                         clock=lambda: CLOCK, payments=service)
+    agent = Agent(llm, bank, "Margaret", payments=service, photos=photos)
+    first = agent.respond("", media=MEDIA)
+    assert "Crawford Electric Cooperative" in first[0] and "YES" in first[0]
+    assert bank.writes == []
+    saved = agent.respond("YES")
+    assert "Saved. Crawford Electric Cooperative" in saved[0]
+    assert bank.writes[0][0] == "create"
+    created = next(b for b in bank.bills if b["payee"] == "Crawford Electric Cooperative")
+    assert created["payment_amount"] == 118.0
+    assert created["status"] == "pending"
+    invoices = client.invoices("demo-margaret")
+    assert any(b["payee"] == "Crawford Electric Cooperative" and b["amount_cents"] == 11800
+               and b["status"] == "unpaid" for b in invoices)
+    llm.intent = {"intent": "question", "confidence": 0.99, "needs": ["bills"],
+                  "restatement": "the bills she has"}
+    listed = agent.respond("What are the bills I have")
+    assert "Crawford Electric Cooperative" in listed[0] and "$118.00" in listed[0]
+    assert "Austin Energy" in listed[0]
+    assert "demo" not in listed[0].casefold()
+    assert "simulated" not in listed[0].casefold()

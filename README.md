@@ -105,8 +105,9 @@ The app never sends a free-form message unless Margaret wrote first.
 | "What is my balance?" | Checking balance from Nessie |
 | "What bills do I have?" | Payee, amount, payment date, status for each bill |
 | Deposits or spending question | Reads deposits or purchases only for those questions |
+| A photo of a paper bill | Reads company, amount, and due date. Asks YES or NO. YES creates or updates that bill in Nessie. No payment is made |
 | "Pay Austin Energy" | "Paying is not turned on yet." No payment is made |
-| yes / no / undo / forwarded text | Recognised. Says these are not available yet |
+| yes / no / undo / forwarded text | Recognised. A YES after a bill photo saves that bill. Otherwise these stay unavailable |
 | Gibberish or off-topic | Asks again. Nessie is not called |
 | Invalid `X-Twilio-Signature` | 403 |
 
@@ -117,6 +118,12 @@ of the real facts instead. A fact Nessie did not return is stated as unknown.
 If Nessie has no customer named Margaret, the app does not create one. It logs
 the customer names that do exist and tells her it cannot see her account.
 Nessie setup (customer, checking account, bills, deposit) is a separate step.
+
+A bill photo is one picture. Steady reads it, says the company, amount, and
+due date in short words, and waits for YES. That write updates a pending
+Nessie bill with the same payee, or adds a new pending bill. It does not pay
+the biller and does not change her balance. NO throws the photo away. A blurry
+picture gets another ask, not a guess.
 
 ### Tests
 
@@ -220,8 +227,10 @@ python -m backend.watch.run --date 2026-10-24  # pin the clock
 python -m backend.watch.demo                   # fixture shapes, no network
 ```
 
-To show an alert on WhatsApp without touching Nessie, have Mom text the bot
-once, then stage a scenario against the running server:
+To show an alert on WhatsApp without touching Nessie, start the server, have
+Mom text the sandbox once (any message), then stage a scenario from
+`C:\Projects\steady\steady`. After that first text, restarts no longer close
+the window: the last inbound is saved and, if needed, looked up from Twilio.
 
 ```sh
 python -m backend.watch.stage              # list: duplicate, subscription, bill_increase,

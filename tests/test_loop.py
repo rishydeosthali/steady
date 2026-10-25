@@ -27,6 +27,27 @@ def test_balance_answer_uses_nessie_balance():
     assert nessie.calls == ["resolve", "balance"]          # only what the question needs
 
 
+def test_balance_answer_subtracts_paid_demo_payments():
+    class Payments:
+        def with_available_balance(self, account_id, facts):
+            facts = dict(facts)
+            facts["balance"] = {
+                "status": "ok",
+                "amount": "$1,380.50",
+                "after_payments": [{"payee": "Austin Energy", "amount": "$120.00"}],
+            }
+            return facts
+
+        def bill_summary(self):
+            return []
+
+    nessie = FakeNessie(balance=1500.5)
+    llm = FakeLLM(intent=intent("question", ["balance"]), reply={"messages": []})
+    out = Agent(llm, nessie, "Margaret", payments=Payments()).respond("What is my balance?")
+    assert out == ["Your checking balance is $1,380.50, after paying $120.00 to Austin Energy."]
+    assert nessie.calls == ["resolve", "balance"]
+
+
 def test_invented_amount_is_rejected_and_real_facts_are_sent():
     nessie = FakeNessie(balance=1500.5)
     llm = FakeLLM(intent=intent("question", ["balance"]),
@@ -89,11 +110,11 @@ def test_yes_no_undo_forwarded_are_recognised_but_unavailable():
         assert nessie.calls == []
 
 
-def test_no_write_methods_exist_on_the_nessie_client():
+def test_nessie_writes_are_only_bill_create_and_update():
     from backend.nessie.client import NessieClient
     public = [n for n in dir(NessieClient) if not n.startswith("_")]
-    assert not any(n.startswith(("post", "put", "delete", "create", "cancel", "pay", "execute"))
-                   for n in public)
+    assert "create_bill" in public and "update_bill" in public
+    assert not any(n.startswith(("delete", "cancel", "pay", "execute")) for n in public)
 
 
 def test_loop_does_not_import_money_contracts():

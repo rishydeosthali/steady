@@ -37,17 +37,35 @@ class FakeLLM:
 
     model = "fake"
 
-    def __init__(self, intent: dict | None = None, reply: dict | None = None):
+    def __init__(self, intent: dict | None = None, reply: dict | None = None,
+                 tools: dict | None = None, photo: dict | None = None):
         self.intent = intent
         self.reply = reply
+        self.tools = tools
+        self.photo = photo
         self.calls: list[tuple[str, str, str]] = []   # (schema, system, user)
+        self.images: list[tuple[str, bytes]] = []
 
     def json_completion(self, system, user, schema_name, schema):
         self.calls.append((schema_name, system, user))
-        data = self.intent if schema_name == "steady_intent" else self.reply
+        if schema_name == "steady_intent":
+            data = self.intent
+        elif schema_name == "steady_tools":
+            if self.tools is None:
+                from backend.agent.llm import LLMError
+                raise LLMError("no tools scripted")
+            data = self.tools
+        elif schema_name == "steady_bill_photo":
+            data = self.photo
+        else:
+            data = self.reply
         if data is None:
             raise AssertionError(f"unexpected LLM call: {schema_name}")
         return data
+
+    def json_vision(self, system, image, mime, schema_name, schema):
+        self.images.append((mime, image))
+        return self.json_completion(system, f"[image {mime} {len(image)} bytes]", schema_name, schema)
 
 
 class FakeNessie:
@@ -57,11 +75,12 @@ class FakeNessie:
                  customers=("Margaret",)):
         self.balance = balance
         self.bills = bills if bills is not None else [
-            {"payee": "Austin Energy", "payment_amount": 120.0, "payment_date": "2026-10-31",
-             "status": "pending"},
-            {"payee": "Water Co", "payment_amount": 45.25, "payment_date": "2026-11-03",
-             "status": "pending"},
+            {"_id": "bill-ae", "payee": "Austin Energy", "nickname": "Electric",
+             "payment_amount": 120.0, "payment_date": "2026-10-31", "status": "pending"},
+            {"_id": "bill-water", "payee": "Water Co", "nickname": "Water",
+             "payment_amount": 45.25, "payment_date": "2026-11-03", "status": "pending"},
         ]
+        self.writes: list[tuple[str, Any]] = []
         self.deposits = deposits or []
         self.purchases = purchases or []
         self.customers = customers
@@ -90,12 +109,30 @@ class FakeNessie:
         self.calls.append("purchases")
         return self.purchases
 
+    def create_bill(self, account_id, bill):
+        self.calls.append("create_bill")
+        self.writes.append(("create", dict(bill)))
+        created = {"_id": f"bill-{len(self.bills) + 1}", **bill}
+        self.bills.append(created)
+        return created
+
+    def update_bill(self, bill_id, bill):
+        self.calls.append("update_bill")
+        self.writes.append(("update", bill_id, dict(bill)))
+        for i, existing in enumerate(self.bills):
+            if existing.get("_id") == bill_id:
+                updated = {**existing, **bill, "_id": bill_id}
+                self.bills[i] = updated
+                return updated
+        raise NessieNotFound(f"PUT /bills/{bill_id} returned 404")
+
 
 class FakeResponse:
     def __init__(self, status: int, payload: Any):
         self.status_code = status
         self._payload = payload
         self.ok = 200 <= status < 300
+        self.content = b"{}" if payload is not None else b""
 
     def json(self):
         return self._payload
@@ -107,8 +144,13 @@ class FakeSession:
     def __init__(self, routes: dict[str, FakeResponse]):
         self.routes = routes
         self.requests: list[tuple[str, str, dict]] = []
+        self.bodies: list[Any] = []
 
     def get(self, url, params=None, timeout=None):
+        return self.request("GET", url, params=params, timeout=timeout)
+
+    def request(self, method, url, params=None, json=None, timeout=None):
         path = url.replace("https://nessie.invalid", "")
-        self.requests.append(("GET", path, params or {}))
+        self.requests.append((method.upper(), path, params or {}))
+        self.bodies.append(json)
         return self.routes.get(path, FakeResponse(404, {}))

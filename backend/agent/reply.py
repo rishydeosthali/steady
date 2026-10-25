@@ -31,6 +31,13 @@ CANT_SEE_BALANCE = "I can't see your balance right now, so I can't check that."
 ASK_AMOUNT = "How much would it be?"
 ASK_PAYEE = "Who would it be paid to?"
 TROUBLE = "I'm having trouble right now. Please try again in a minute."
+PHOTO_UNREADABLE = ("I couldn't read that photo. "
+                    "Hold the bill flat in good light and send another picture.")
+PHOTO_BAD_FILE = "I can only read a photo. Send a picture of the paper bill."
+PHOTO_TOO_LARGE = "That photo is too large. Send a smaller picture of just the bill."
+PHOTO_DISCARD = "Okay. I did not save that bill."
+PHOTO_SAVE_FAILED = "I couldn't save that bill right now. Please try again in a minute."
+PHOTO_NOT_ON = "I can look at a photo of a bill. That is not turned on yet."
 
 _SYSTEM = """You write WhatsApp replies for Steady, a helper for an older adult named Margaret.
 Her question is in the user message, with a FACTS object read from her bank a moment ago.
@@ -45,6 +52,7 @@ Hard rules:
 - Never name a weekday, and never say "today", "tomorrow", or "yesterday".
 - If a needed fact has status "unavailable", or a value is null, or a list is empty, say plainly that you cannot see it, or that none were found. Never fill the gap.
 - For bills, say payee, amount, payment date, and status for each bill.
+- For balance, use FACTS.balance.amount. That number already includes any after_payments. You may mention those payments. Never add or subtract them yourself.
 - Do not offer to pay or change anything. Do not give advice.
 - Answer only what she asked.
 
@@ -118,7 +126,12 @@ def render_plainly(facts: dict[str, Any], needs: tuple[str, ...]) -> list[str]:
             out.append(f"I can't see your {need} right now.")
             continue
         if need == "balance":
-            out.append(f"Your checking balance is {f['amount']}.")
+            paid = f.get("after_payments") or []
+            if paid:
+                parts = " and ".join(f"{p['amount']} to {p['payee']}" for p in paid)
+                out.append(f"Your checking balance is {f['amount']}, after paying {parts}.")
+            else:
+                out.append(f"Your checking balance is {f['amount']}.")
             continue
         items = f.get("items", [])
         if not items:

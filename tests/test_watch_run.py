@@ -242,7 +242,8 @@ def test_pay_request_still_does_not_pay(ledger):
 STAGED = {
     "duplicate": "There are two $120 Dentist charges today. Were you expecting both?",
     "subscription": "StreamBox charged $14.99 again. This may be a monthly subscription.",
-    "bill_increase": "Your Internet bill increased from $65 to $85.",
+    "bill_increase": ("Your Internet bill increased from $65 to $85. "
+                      "Is that normal? Reply yes or no."),
     "shortfall": "This leaves $147.75 after your upcoming bills.",
     "deposit_missing": "Your usual deposit hasn't appeared yet. Let's check before scheduling payments.",
     "held": "You already put this payment on hold. It's still on hold.",
@@ -301,12 +302,18 @@ def test_watch_check_does_not_store(settings, ledger):
     assert ledger.events() == []
 
 
+def test_watch_session_is_closed_until_mom_texts(settings, ledger):
+    c = make_client(settings, ledger)
+    assert c.get("/watch/session").get_json() == {"open": False}
+
+
 def test_watch_routes_refuse_requests_relayed_by_the_tunnel(settings, ledger):
     c = make_client(settings, ledger)
     for headers in ({"X-Forwarded-For": "1.2.3.4"}, {"Cf-Connecting-Ip": "1.2.3.4"}):
         assert c.post("/watch/run", headers=headers).status_code == 403
         assert c.post("/watch/decisions", headers=headers,
                       json={"payee": "Roofer", "decision": "declined"}).status_code == 403
+        assert c.get("/watch/session", headers=headers).status_code == 403
     assert ledger.tape() == []
 
 

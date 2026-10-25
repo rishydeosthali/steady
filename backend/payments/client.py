@@ -53,6 +53,25 @@ class BillerClient:
             raise BillerError("Invalid invoice id")
         return self._request("GET", "/v1/invoices/" + invoice_id)["invoice"]
 
+    def create_invoice(self, customer, payee, amount_cents, due_date):
+        """POST /v1/invoices. Adds a bill, or updates the unpaid one for this payee."""
+        if not isinstance(customer, str) or not customer or len(customer) > 80:
+            raise BillerError("Invalid customer")
+        if not isinstance(payee, str) or not payee.strip() or len(payee) > 80:
+            raise BillerError("Invalid payee")
+        if type(amount_cents) is not int or amount_cents <= 0:
+            raise BillerError("Invalid amount")
+        if not isinstance(due_date, str):
+            raise BillerError("Invalid due date")
+        payload = self._request("POST", "/v1/invoices", json={
+            "customer_ref": customer, "payee": payee.strip(), "amount_cents": amount_cents,
+            "currency": "USD", "due_date": due_date,
+        })
+        invoice = payload.get("invoice")
+        if not isinstance(invoice, dict) or not invoice.get("id"):
+            raise BillerError("Invalid created invoice")
+        return invoice
+
     def receipt(self, key):
         if not key.isalnum():
             raise BillerError("Invalid idempotency key")

@@ -14,16 +14,18 @@ import json
 import logging
 import threading
 import time
+from pathlib import Path
 
 from twilio.base.exceptions import TwilioRestException
 from twilio.request_validator import RequestValidator
 from twilio.rest import Client
 
-from .config import Settings
+from .config import REPO_ROOT, Settings
 
 log = logging.getLogger(__name__)
 
 SESSION_SECONDS = 24 * 60 * 60
+SESSION_PATH = REPO_ROOT / "data" / "sessions.json"
 
 # The Twilio SDK logs request details at INFO/DEBUG. Keep it quiet.
 logging.getLogger("twilio.http_client").setLevel(logging.WARNING)
@@ -38,11 +40,13 @@ class TemplateUnavailable(Exception):
 
 
 class TwilioWhatsApp:
-    def __init__(self, settings: Settings, *, client: Client | None = None):
+    def __init__(self, settings: Settings, *, client: Client | None = None,
+                 session_path: Path | None = SESSION_PATH):
         self._s = settings
         self._client = client or Client(settings.twilio_account_sid, settings.twilio_auth_token)
         self._validator = RequestValidator(settings.twilio_auth_token)
-        self._last_inbound: dict[str, float] = {}
+        self._session_path = Path(session_path) if session_path else None
+        self._last_inbound: dict[str, float] = self._read_sessions()
         self._lock = threading.Lock()
 
     # -- inbound ---------------------------------------------------------
@@ -55,13 +59,71 @@ class TwilioWhatsApp:
     def record_inbound(self, from_: str) -> None:
         with self._lock:
             self._last_inbound[from_] = time.time()
+            self._write_sessions()
 
     def session_open(self, to: str) -> bool:
+        now = time.time()
         with self._lock:
             seen = self._last_inbound.get(to)
-        return seen is not None and (time.time() - seen) < SESSION_SECONDS
+            if seen is not None and (now - seen) < SESSION_SECONDS:
+                return True
+        seen = self._remember_from_twilio(to)
+        if seen is None or (now - seen) >= SESSION_SECONDS:
+            return False
+        with self._lock:
+            self._last_inbound[to] = seen
+            self._write_sessions()
+        return True
+
+    def _read_sessions(self) -> dict[str, float]:
+        if self._session_path is None or not self._session_path.exists():
+            return {}
+        try:
+            raw = json.loads(self._session_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, TypeError):
+            return {}
+        if not isinstance(raw, dict):
+            return {}
+        out: dict[str, float] = {}
+        for key, value in raw.items():
+            try:
+                out[str(key)] = float(value)
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def _write_sessions(self) -> None:
+        if self._session_path is None:
+            return
+        try:
+            self._session_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._session_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(self._last_inbound), encoding="utf-8")
+            tmp.replace(self._session_path)
+        except OSError:
+            log.warning("could not persist WhatsApp session window")
+
+    def _remember_from_twilio(self, from_: str) -> float | None:
+        """Ask Twilio for the last inbound if this process forgot (restart)."""
+        messages = getattr(self._client, "messages", None)
+        if messages is None or not hasattr(messages, "list"):
+            return None
+        try:
+            rows = messages.list(from_=from_, to=self._s.twilio_whatsapp_from, limit=1)
+        except Exception as exc:  # noqa: BLE001 - transport or auth; never log the body
+            log.warning("session lookup failed: %s", type(exc).__name__)
+            return None
+        if not rows:
+            return None
+        when = getattr(rows[0], "date_sent", None) or getattr(rows[0], "date_created", None)
+        return when.timestamp() if when is not None and hasattr(when, "timestamp") else None
 
     # -- outbound --------------------------------------------------------
+
+    def fetch_media(self, url: str) -> tuple[bytes, str]:
+        """Download one inbound WhatsApp image. Host and size are checked in code."""
+        from .agent.photo import fetch_twilio_media
+        return fetch_twilio_media(url, self._s.twilio_account_sid, self._s.twilio_auth_token)
 
     def send_reply(self, to: str, body: str) -> str:
         """Free-form reply inside an open session. Returns the message SID."""

@@ -56,7 +56,8 @@ def fallback(sheet: dict[str, Any]) -> str:
     """The deterministic sentence for a verdict. Tests assert these."""
     kind, f = sheet["kind"], sheet["facts"]
     if kind == "bill_increase":
-        return f"Your {f['payee']} bill increased from {f['previous']} to {f['pending']}."
+        return (f"Your {f['payee']} bill increased from {f['previous']} to {f['pending']}. "
+                "Is that normal? Reply yes or no.")
     if kind == "duplicate":
         if f["same_day_as_clock"]:
             when = "today"
@@ -142,6 +143,19 @@ def rewrite(draft: str, facts: dict[str, Any], llm) -> str:
     return draft
 
 
+_YES_NO = {
+    "bill_increase": "Is that normal? Reply yes or no.",
+    "duplicate": "Were you expecting both?",
+}
+
+
 def word(sheet: dict[str, Any], llm=None) -> str:
     """The text Mom reads for a notify verdict."""
-    return rewrite(fallback(sheet), sheet["facts"], llm)
+    text = rewrite(fallback(sheet), sheet["facts"], llm)
+    ask = _YES_NO.get(sheet["kind"])
+    if ask and ask.split("?")[0].lower() not in text.lower():
+        text = text.rstrip()
+        if text and text[-1] not in ".!?":
+            text += "."
+        text = f"{text} {ask}"
+    return text

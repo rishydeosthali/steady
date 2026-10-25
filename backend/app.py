@@ -14,13 +14,15 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from functools import wraps
 
-from flask import Flask, Response, jsonify, request
+from flask import Flask, Response, jsonify, request, send_from_directory
 from twilio.twiml.messaging_response import MessagingResponse
 from werkzeug.middleware.proxy_fix import ProxyFix
 
+from .agent.audit import AuditLog, IdleWorker
 from .agent.intent import parse_amount_cents
 from .agent.llm import LLM
 from .agent.loop import Agent
+from .agent.photo import InboundMedia, PhotoIntake
 from .config import ConfigError, Settings, load_settings
 from .nessie.client import NessieClient, NessieError
 from .twilio_client import SessionClosed, TwilioWhatsApp
@@ -31,6 +33,7 @@ from .watch.units import to_cents
 
 LOCAL_ADDRS = {"127.0.0.1", "::1"}
 FORWARD_HEADERS = ("X-Forwarded-For", "Cf-Connecting-Ip", "Forwarded")
+AUDIT_UI = os.path.join(os.path.dirname(__file__), "audit_ui")
 
 log = logging.getLogger("steady")
 
@@ -45,6 +48,20 @@ def _mask(address: str) -> str:
 
 def _empty_twiml() -> Response:
     return Response(str(MessagingResponse()), mimetype="text/xml")
+
+
+def _inbound_media(form) -> InboundMedia | None:
+    """First inbound image or file, if Twilio sent one. Extra photos are ignored."""
+    url = (form.get("MediaUrl0") or "").strip()
+    if not url:
+        return None
+    try:
+        count = int(form.get("NumMedia") or "1")
+    except (TypeError, ValueError):
+        count = 1
+    if count < 1:
+        return None
+    return InboundMedia(url=url, content_type=form.get("MediaContentType0") or "")
 
 
 def _local_only(view):
@@ -78,21 +95,35 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
         twilio.send_reply(settings.mom_whatsapp_to, text)
         return True
 
+    audit = getattr(agent, "_audit", None) if agent is not None else None
     if agent is None:
         llm = LLM(settings.openai_api_key, settings.openai_model)
         watcher = watcher or build_watcher(settings, llm=llm, mom_sink=mom_sink)
+        audit = AuditLog()
+        if payments is not None:
+            payments.audit = audit
+        nessie = NessieClient(settings.nessie_base_url, settings.nessie_api_key)
+        photos = PhotoIntake(llm, nessie, settings.customer_first_name,
+                             fetch=twilio.fetch_media, audit=audit, payments=payments)
         agent = Agent(
             llm=llm,
-            nessie=NessieClient(settings.nessie_base_url, settings.nessie_api_key),
+            nessie=nessie,
             customer_first_name=settings.customer_first_name,
             payments=payments,
             watcher=watcher,
+            audit=audit,
+            photos=photos,
         )
+    elif payments is not None and getattr(payments, "audit", None) is None and audit is not None:
+        payments.audit = audit
     executor = executor or ThreadPoolExecutor(max_workers=4, thread_name_prefix="steady")
     seen_sids: set[str] = set()
 
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 16 * 1024
+    if watcher is not None:
+        app.extensions["watcher"] = watcher
+    app.extensions["audit"] = audit
     if payments is not None:
         app.extensions["external_payments"] = payments
         if hasattr(payments, "caregiver_decide"):
@@ -115,9 +146,9 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
         return twilio.validate_signature(request_url(), request.form,
                                          request.headers.get("X-Twilio-Signature"))
 
-    def reply_to(from_: str, sid: str, body: str) -> None:
+    def reply_to(from_: str, sid: str, body: str, media: InboundMedia | None = None) -> None:
         try:
-            texts = agent.respond(body,message_id=sid) if payments is not None else agent.respond(body)
+            texts = agent.respond(body, message_id=sid, media=media)
             for text in texts:
                 twilio.send_reply(from_, text)
             if payments is not None:
@@ -164,9 +195,11 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
         if sid:
             seen_sids.add(sid)
 
-        log.info("inbound %s from %s (%d chars)", sid, _mask(from_), len(body))
+        media = _inbound_media(request.form)
+        log.info("inbound %s from %s (%d chars, photo=%s)", sid, _mask(from_),
+                 len(body), bool(media))
         twilio.record_inbound(from_)          # opens the free-form session
-        executor.submit(reply_to, from_, sid, body)
+        executor.submit(reply_to, from_, sid, body, media)
         return _empty_twiml()
 
     @app.post("/whatsapp/status")
@@ -243,6 +276,39 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
         except NessieError as exc:
             return jsonify({"error": f"Nessie read failed: {exc}"}), 502
 
+    @app.get("/watch/session")
+    @_local_only
+    def watch_session():
+        return jsonify({"open": twilio.session_open(settings.mom_whatsapp_to)})
+
+    @app.get("/audit")
+    @_local_only
+    def audit_page():
+        return send_from_directory(AUDIT_UI, "index.html")
+
+    @app.get("/audit/static/<path:name>")
+    @_local_only
+    def audit_static(name):
+        return send_from_directory(os.path.join(AUDIT_UI, "static"), name)
+
+    @app.get("/audit/events")
+    @_local_only
+    def audit_events():
+        log_ = app.extensions.get("audit")
+        return jsonify({"events": log_.events() if log_ is not None else []})
+
+    @app.post("/audit/idle")
+    @_local_only
+    def audit_idle():
+        log_ = app.extensions.get("audit")
+        text = log_.offer_if_idle() if log_ is not None else None
+        if text and twilio.session_open(settings.mom_whatsapp_to):
+            try:
+                twilio.send_reply(settings.mom_whatsapp_to, text)
+            except SessionClosed:
+                log.info("summary offer waiting: WhatsApp session closed")
+        return jsonify({"offered": bool(text), "text": text})
+
     @app.post("/watch/demo/<name>/<step>")
     @_local_only
     def watch_demo(name: str, step: str):
@@ -272,16 +338,41 @@ def main() -> None:
         print(f"Stopping: {exc}",file=sys.stderr)
         raise SystemExit(1) from None
     worker = None
+    idle = None
+    messenger = TwilioWhatsApp(settings)
+
+    def send_offer(text: str) -> None:
+        try:
+            messenger.send_reply(settings.mom_whatsapp_to, text)
+        except SessionClosed:
+            log.info("summary offer waiting: WhatsApp session closed")
+
     if "external_payments" in app.extensions:
         from .payments.integration import PaymentWorker
-        worker = PaymentWorker(app.extensions["external_payments"])
+
+        def send_followups():
+            due = getattr(getattr(app.extensions.get("watcher"), "ledger", None), "due_followups", None)
+            if not due:
+                return
+            for text in due():
+                try:
+                    messenger.send_reply(settings.mom_whatsapp_to, text)
+                except SessionClosed:
+                    log.info("followup waiting: WhatsApp session closed")
+
+        worker = PaymentWorker(app.extensions["external_payments"], extra=send_followups)
         worker.start()
-    log.info("Steady WhatsApp agent listening on :5000 (webhook path /whatsapp/inbound)")
+    if app.extensions.get("audit") is not None:
+        idle = IdleWorker(app.extensions["audit"], send_offer)
+        idle.start()
+    log.info("Steady WhatsApp agent listening on :5000 (webhook /whatsapp/inbound, local log /audit)")
     try:
         app.run(host="127.0.0.1", port=5000, threaded=True)
     finally:
         if worker:
             worker.stop()
+        if idle:
+            idle.stop()
 
 
 if __name__ == "__main__":

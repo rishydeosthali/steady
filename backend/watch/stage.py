@@ -143,10 +143,32 @@ def run_step(name: str, step: str, *, llm=None, mom_sink: MomSink | None = None,
 
 # -- CLI: drives the running server -------------------------------------------
 
+SESSION_HINT = (
+    "WhatsApp will not deliver yet. From Mom's phone, text the sandbox \"hi\", "
+    "wait for a reply, then run this again from C:\\Projects\\steady\\steady."
+)
+
+
+def _get(base: str, path: str) -> dict[str, Any]:
+    import requests
+
+    try:
+        r = requests.get(f"{base}{path}", timeout=10)
+    except requests.RequestException as exc:
+        raise SystemExit(f"Cannot reach the server at {base}. Start it first: "
+                         f".\\.venv\\Scripts\\python.exe -m backend.app\n({exc})") from None
+    if r.status_code != 200:
+        raise SystemExit(f"Server said {r.status_code}: {r.text.strip()[:200]}")
+    return r.json()
+
+
 def _post(base: str, name: str, step: str) -> dict[str, Any]:
     import requests
 
-    r = requests.post(f"{base}/watch/demo/{name}/{step}", timeout=60)
+    try:
+        r = requests.post(f"{base}/watch/demo/{name}/{step}", timeout=60)
+    except requests.RequestException as exc:
+        raise SystemExit(f"Cannot reach the server at {base}: {exc}") from None
     if r.status_code != 200:
         raise SystemExit(f"Server said {r.status_code}: {r.text.strip()[:200]}")
     return r.json()
@@ -167,7 +189,7 @@ def _print(result: dict[str, Any]) -> None:
         print("    nothing worth a text")
     for v in result["verdicts"]:
         if v["consumer"] == "mom":
-            status = "SENT to WhatsApp" if v["sent"] else "NOT sent (has Mom texted in the last 24h?)"
+            status = "SENT to WhatsApp" if v["sent"] else f"NOT sent. {SESSION_HINT}"
             print(f"    {v['kind']}: \"{v['text']}\"  -> {status}")
         else:
             print(f"    {v['kind']}: silent, for {v['consumer']}")
@@ -183,6 +205,11 @@ def main(argv: list[str] | None = None) -> int:
         for name, s in SCENARIOS.items():
             print(f"{name:16} {s.title}: {s.event}")
         return 0
+
+    session = _get(args.server, "/watch/session")
+    if not session.get("open"):
+        print(SESSION_HINT)
+        return 2
 
     print(f"== {SCENARIOS[args.scenario].title} ==")
     _print(_post(args.server, args.scenario, "baseline"))

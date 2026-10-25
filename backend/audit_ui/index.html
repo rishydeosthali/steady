@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Steady · Decision log</title>
+  <link rel="stylesheet" href="/audit/static/log.css">
+  <script src="/audit/static/log.js" defer></script>
+</head>
+<body>
+  <main>
+    <header class="masthead">
+      <div>
+        <div class="wordmark">steady<span>●</span></div>
+        <p>Every decision, in order. Nothing on this page can move money.</p>
+      </div>
+      <span class="pill">APPEND-ONLY · LOCAL</span>
+    </header>
+    <section class="intro">
+      <div>
+        <p class="eyebrow">THE LOG</p>
+        <h1>What Steady did,<br>and why.</h1>
+        <p>Intents, tool calls, payment decisions, and receipts land here as they happen. After a quiet minute, Margaret is offered a recap of this same trail.</p>
+      </div>
+      <div class="date-card">
+        <span>Rows on the tape</span>
+        <strong id="count">0</strong>
+        <small id="fresh">Waiting for the first decision</small>
+      </div>
+    </section>
+    <nav class="filters" aria-label="Filter the log">
+      <button type="button" data-filter="all" class="on">All</button>
+      <button type="button" data-filter="decision" class="secondary">Decisions</button>
+      <button type="button" data-filter="tool" class="secondary">Tools</button>
+      <button type="button" data-filter="reply" class="secondary">Messages</button>
+      <button type="button" data-filter="receipt" class="secondary">Receipts</button>
+    </nav>
+    <p id="error" role="alert" hidden></p>
+    <ol id="timeline" class="timeline"></ol>
+  </main>
+</body>
+</html>
