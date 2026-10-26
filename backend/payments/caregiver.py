@@ -149,59 +149,39 @@ _PAGE = """<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Steady payment approval</title>
 <style>
-:root{{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#213c34;background:#eef1e6}}
+html{{font-family:"Segoe UI",Helvetica,Arial,sans-serif;color:#111;background:#fff}}
 *{{box-sizing:border-box}}
-body{{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:28px 16px;
-background:radial-gradient(circle at top,#f7f4e8 0%,#e8eee0 55%,#e4ead8 100%)}}
-.shell{{width:100%;max-width:460px}}
-.wordmark{{font-family:Georgia,serif;font-size:30px;font-weight:700;letter-spacing:-1.2px;margin:0 0 16px}}
-.wordmark span{{color:#c7a95d;font-size:12px;margin-left:5px}}
-.card{{background:#fffef8;border:1px solid #d5dcc8;border-radius:24px;overflow:hidden;
-box-shadow:0 18px 50px rgba(38,79,64,.08)}}
-.banner{{height:8px;background:linear-gradient(90deg,#264f40,#6d8a5e 60%,#c7a95d)}}
-.inner{{padding:28px 28px 24px}}
-.eyebrow{{font-size:11px;letter-spacing:1.7px;font-weight:750;color:#65806d;margin:0 0 8px}}
-h1{{font-family:Georgia,serif;font-size:30px;font-weight:400;letter-spacing:-.7px;line-height:1.15;margin:0 0 10px}}
-.lead,.note{{font-size:16px;line-height:1.55;color:#5b6b5e;margin:0 0 20px}}
-.amount-card{{background:#f6f5ed;border:1px solid #e4ead8;border-radius:18px;padding:18px 20px 8px;margin:0 0 22px}}
-.amount-card .label{{display:block;font-size:11px;letter-spacing:.8px;text-transform:uppercase;color:#7a8776;font-weight:650}}
-.amount-card .hero{{display:block;font-family:Georgia,serif;font-size:42px;letter-spacing:-1.4px;margin:6px 0 16px}}
-.facts{{list-style:none;margin:0 -4px;padding:14px 4px 8px;border-top:1px solid #e8eedc;display:flex;gap:16px}}
-.facts li{{flex:1;min-width:0}}
-.facts span{{display:block;color:#7a8776;font-size:11px;letter-spacing:.4px;text-transform:uppercase;font-weight:650;margin-bottom:4px}}
-.facts strong{{font-size:16px;font-weight:650}}
-.actions{{display:flex;gap:10px;margin:0 0 14px}}
+body{{margin:0;min-height:100vh;display:flex;justify-content:center;padding:48px 20px;background:#fff}}
+.wrap{{width:100%;max-width:420px}}
+.brand{{margin:0 0 36px;font-size:15px;font-weight:600}}
+h1{{margin:0 0 8px;font-size:22px;font-weight:600;line-height:1.25}}
+.lead,.note{{margin:0 0 24px;font-size:14px;line-height:1.5;color:#444}}
+table{{width:100%;border-collapse:collapse;margin:0 0 28px}}
+th,td{{padding:11px 0;border-bottom:1px solid #ddd;font-size:14px;text-align:left;vertical-align:top}}
+th{{width:38%;font-weight:400;color:#555}}
+td{{font-weight:600}}
+.actions{{display:flex;gap:12px;margin:0 0 20px}}
 form{{flex:1;margin:0}}
-button{{width:100%;font:inherit;font-size:16px;font-weight:700;padding:14px 16px;border:1px solid transparent;border-radius:14px;cursor:pointer}}
-.approve{{background:#264f40;color:#fff}}.approve:hover{{background:#1d3f33}}
-.deny{{background:#fffef8;color:#8d5b32;border-color:#e4d2b8}}.deny:hover{{background:#f8efe3}}
-.picked{{box-shadow:0 0 0 3px #f5b400}}
-.hint{{margin:0;font-size:13px;line-height:1.55;color:#8a927f}}
-.stamp{{display:inline-block;margin:0 0 12px;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:750;letter-spacing:.4px}}
-.ok .stamp{{background:#e3ebdf;color:#264f40}}
-.stop .stamp{{background:#f6e7dc;color:#8d5b32}}
-.wait .stamp{{background:#efe8d4;color:#7a6230}}
+button{{width:100%;padding:10px 14px;border:1px solid #111;border-radius:2px;font:inherit;font-size:14px;font-weight:600;cursor:pointer}}
+.approve{{background:#111;color:#fff}}
+.approve:hover{{background:#000}}
+.deny{{background:#fff;color:#111}}
+.deny:hover{{background:#f4f4f4}}
+.picked{{outline:2px solid #111;outline-offset:2px}}
+.hint{{margin:0;font-size:13px;line-height:1.5;color:#555}}
+.status{{margin:0 0 8px;font-size:12px;font-weight:600;color:#555}}
 </style>
 </head>
-<body><div class="shell"><p class="wordmark">steady<span>●</span></p><article class="card"><div class="banner"></div><div class="inner">{body}</div></article></div></body></html>"""
+<body><div class="wrap"><p class="brand">Steady</p>{body}</div></body></html>"""
 
 
 def _details(view: dict) -> str:
     e = html.escape
-    return (f"<div class='amount-card'><span class='label'>Amount</span>"
-            f"<strong class='hero'>{e(view['amount'])}</strong>"
-            f"<ul class='facts'>"
-            f"<li><span>Payee</span><strong>{e(view['payee'])}</strong></li>"
-            f"<li><span>Payment date</span><strong>{e(view['date'])}</strong></li>"
-            f"</ul></div>")
-
-
-def _tone(status: str) -> str:
-    if status in {"scheduled", "paid", "awaiting_caregiver"}:
-        return "ok"
-    if status in {"denied", "cancelled", "expired", "held"}:
-        return "stop"
-    return "wait"
+    return (f"<table><tbody>"
+            f"<tr><th>Amount</th><td>{e(view['amount'])}</td></tr>"
+            f"<tr><th>Payee</th><td>{e(view['payee'])}</td></tr>"
+            f"<tr><th>Payment date</th><td>{e(view['date'])}</td></tr>"
+            f"</tbody></table>")
 
 
 def render_page(view: dict, token: str, *, preselect: str | None = None, message: str | None = None) -> str:
@@ -209,19 +189,18 @@ def render_page(view: dict, token: str, *, preselect: str | None = None, message
     details = _details(view)
     if message or view["status"] != "awaiting_caregiver":
         note = message or view["status_text"]
-        return _PAGE.format(body=(f"<div class='{_tone(view['status'])}'>"
-                                  f"<p class='stamp'>PAYMENT REQUEST</p>"
+        return _PAGE.format(body=(f"<p class='status'>Payment request</p>"
                                   f"<h1>Steady payment approval</h1>"
-                                  f"<p class='note'>{e(note)}</p>{details}</div>"))
+                                  f"<p class='note'>{e(note)}</p>{details}"))
     picked = {d: " picked" if preselect == d else "" for d in ("approve", "deny")}
     forms = "".join(
         f'<form method="post" action="/caregiver/{e(token)}/{d}">'
         f'<button class="{d}{picked[d]}" type="submit">{label}</button></form>'
         for d, label in (("approve", "Approve"), ("deny", "Deny")))
-    return _PAGE.format(body=(f"<p class='eyebrow'>NEEDS YOUR OK</p>"
-                              f"<h1>{e(view['senior'])} wants to pay a bill</h1>"
-                              f"<p class='lead'>{e(view['senior'])} wants to make this payment "
+    return _PAGE.format(body=(f"<h1>Payment approval</h1>"
+                              f"<p class='lead'>{e(view['senior'])} asked Steady to pay this bill "
                               f"and needs your approval.</p>"
                               f"{details}<div class='actions'>{forms}</div>"
                               f"<p class='hint'>Nothing is paid unless you approve. "
-                              "Demo payment to a simulated biller; no real funds move.</p>"))
+                              "If you do nothing, the payment stays on hold. "
+                              "This is a Steady demo payment to a simulated biller; no real funds move.</p>"))

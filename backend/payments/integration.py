@@ -151,9 +151,16 @@ class PaymentWorker:
         self.thread = threading.Thread(target=self._run,name="external-biller-monitor",daemon=True)
 
     def _run(self):
+        first = True
         while not self.stop_event.is_set():
             try:
                 self.service.tick()
+                if first:
+                    # Restart only: a leftover YES/NO with nothing queued gets
+                    # one offer. tick() already queued a fresh proposal.
+                    if self.service.remind():
+                        log.info("offered the open bill proposal")
+                    first = False
                 self.service.flush()
                 if self.extra:
                     self.extra()

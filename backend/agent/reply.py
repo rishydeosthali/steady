@@ -22,6 +22,8 @@ MAX_MESSAGES = 3
 # Fixed copy. No money values live here.
 REASK = ("Sorry, I didn't catch that. "
          "I can tell you your balance, your bills, or your deposits. What would you like to know?")
+HELLO = ("Hi. I can tell you your balance, your bills, or your deposits. "
+         "What would you like to know?")
 NOT_AVAILABLE = ("I can answer questions about your account. "
                  "I can't pay bills, undo things, or check a forwarded text yet.")
 PAY_NOT_ON = ("I can look up your bills and balance. "
@@ -38,6 +40,9 @@ PHOTO_TOO_LARGE = "That photo is too large. Send a smaller picture of just the b
 PHOTO_DISCARD = "Okay. I did not save that bill."
 PHOTO_SAVE_FAILED = "I couldn't save that bill right now. Please try again in a minute."
 PHOTO_NOT_ON = "I can look at a photo of a bill. That is not turned on yet."
+NOT_HER = ("This chat is just for Margaret. "
+           "I didn't share any account facts.")
+NOT_HER_TOLD = NOT_HER + " I let your family know."
 
 _SYSTEM = """You write WhatsApp replies for Steady, a helper for an older adult named Margaret.
 Her question is in the user message, with a FACTS object read from her bank a moment ago.

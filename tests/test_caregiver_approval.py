@@ -9,11 +9,11 @@ import sqlite3
 from backend.agent.loop import Agent
 from backend.app import create_app
 from backend.payments.caregiver import CaregiverMailer, MailError
-from backend.payments.service import MAX_EMAIL_ATTEMPTS
-from tests.conftest import FakeLLM, FakeNessie
-from tests.test_app import InlineExecutor
-from tests.test_external_biller import (FakeMailer, approve, job, provider, senior_yes,  # noqa: F401
-                                        setup_service)
+from backend.payments.service import MAX_EMAIL_ATTEMPTS, PaymentService
+from tests.conftest import MOM, FakeLLM, FakeNessie
+from tests.test_app import InlineExecutor, RecordingTwilio
+from tests.test_external_biller import (ANCHOR, FakeMailer, approve, job, provider,  # noqa: F401
+                                        senior_yes, setup_service)
 
 
 def payments(client):
@@ -23,6 +23,51 @@ def payments(client):
 def app_for(settings,service,bank,twilio):
     return create_app(settings,agent=Agent(FakeLLM(),bank,"Margaret",payments=service),
                       twilio=twilio,payments=service,executor=InlineExecutor()).test_client()
+
+
+def test_remind_sends_the_open_yes_or_no_without_a_hi(provider,tmp_path,settings):
+    client,_ = provider
+    service,_,twilio = setup_service(tmp_path,settings,client)
+    before = len(twilio.sent)
+    assert service.remind() is True
+    service.flush()
+    assert len(twilio.sent) == before + 1
+    assert "Would you like me to schedule it? Reply YES or NO." in twilio.sent[-1][1]
+
+
+def test_fresh_proposal_is_offered_once_even_if_startup_reminds(provider,tmp_path,settings):
+    client,_ = provider
+    transport = RecordingTwilio(settings)
+    transport.record_inbound(MOM)
+    service = PaymentService(tmp_path/"once.sqlite3",client,FakeNessie(balance=2213,bills=[]),
+                             transport,MOM,demo_date=ANCHOR,mailer=FakeMailer(),caregiver_name="Sarah")
+    service.tick()
+    assert service.remind() is False
+    service.flush()
+    proposals = [body for _,body in transport.sent if "Reply YES or NO" in body]
+    assert len(proposals) == 1
+
+
+def test_hi_then_flush_does_not_resend_a_queued_proposal(provider,tmp_path,settings):
+    client,_ = provider
+    bank = FakeNessie(balance=2213,bills=[])
+    transport = RecordingTwilio(settings)
+    transport.record_inbound(MOM)
+    service = PaymentService(tmp_path/"hi-once.sqlite3",client,bank,transport,MOM,demo_date=ANCHOR,
+                             mailer=FakeMailer(),caregiver_name="Sarah")
+    service.tick()
+    out = Agent(FakeLLM(),bank,"Margaret",payments=service).respond("hi")
+    service.flush()
+    assert "Reply YES or NO" in out[0]
+    assert [body for _,body in transport.sent if "Reply YES or NO" in body] == []
+
+
+def test_hi_repeats_the_open_yes_or_no_proposal(provider,tmp_path,settings):
+    client,_ = provider
+    service,bank,_ = setup_service(tmp_path,settings,client)
+    out = Agent(FakeLLM(),bank,"Margaret",payments=service).respond("hi")
+    assert out == [service.pending_readback()]
+    assert "Would you like me to schedule it? Reply YES or NO." in out[0]
 
 
 def test_recommends_paying_after_deposit_and_caregiver_email_hides_balance(provider,tmp_path,settings):

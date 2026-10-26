@@ -23,10 +23,17 @@ from .audit import asks_for_summary
 from .intent import ParsedIntent, parse_amount_cents, parse_intent
 from .llm import LLM, LLMError
 from .photo import InboundMedia, PhotoIntake, confirm_text, simple_decision
+from .speaker import SpeakerVerdict, is_greeting, screen, tripwires
 
 log = logging.getLogger(__name__)
 
 _PAYMENT_REF = re.compile(r"\b[0-9A-Fa-f]{8}\b")
+
+
+def _privacy_trip(body: str) -> bool:
+    """Account number or someone claiming to be her son. A recap is neither."""
+    flags = set(tripwires(body))
+    return bool(flags & {"account_secrets", "impersonation"})
 
 
 def _names_a_payment(body: str) -> bool:
@@ -59,8 +66,27 @@ class Agent:
 
         ``body`` is untrusted. It only ever reaches the model as a user message.
         A photo is handled before intent: the model reads the picture, code
-        saves the bill after YES.
+        saves the bill after YES.         A hello is answered in kind. A household balance question and the log
+        history are answered. Only a real outsider tell (an account password
+        or account number, or someone claiming to be her son) is refused
+        before any account fact or payment decision.
         """
+        if self._audit is not None and asks_for_summary(body) and not _privacy_trip(body):
+            return self._audit.give_recap()
+
+        if media is None and is_greeting(body):
+            look = getattr(self._payments, "claim_readback", None) \
+                or getattr(self._payments, "pending_readback", None)
+            prompt = look() if callable(look) else None
+            if prompt:
+                return self._finish("decision", "greeting, open bill", [prompt])
+            return self._finish("decision", "greeting", [reply.HELLO])
+
+        if (body or "").strip():
+            verdict = screen(self._llm, body)
+            if not verdict.allowed:
+                return self._refuse_outsider(body, verdict)
+
         if media is not None:
             if self._photos is None:
                 return self._finish("blocked", "photo intake is not attached", [reply.PHOTO_NOT_ON])
@@ -73,9 +99,6 @@ class Agent:
                 if handled is not None:
                     return self._finish("decision", "bill photo reply handled in code", handled,
                                         intent=simple)
-
-        if self._audit is not None and asks_for_summary(body):
-            return self._audit.give_recap()
 
         try:
             parsed = parse_intent(self._llm, body)
@@ -183,3 +206,21 @@ class Agent:
                             external + reply.write_answer(self._llm, body, parsed.restatement,
                                                          facts, parsed.needs),
                             needs=list(parsed.needs))
+
+    def _refuse_outsider(self, body: str, verdict: SpeakerVerdict) -> list[str]:
+        """No facts, no payment, no photo save. Tell the caregiver when we can."""
+        told = False
+        mailer = getattr(self._payments, "mailer", None) if self._payments is not None else None
+        if mailer is not None and hasattr(mailer, "notify"):
+            try:
+                mailer.notify(
+                    "someone else used Margaret's chat",
+                    {"kind": "outsider", "what_she_said": (body or "").strip()[:120]},
+                    "now",
+                )
+                told = True
+            except Exception as exc:  # noqa: BLE001 - mailer type only; body can be sensitive
+                log.warning("outsider alert email failed: %s", type(exc).__name__)
+        text = reply.NOT_HER_TOLD if told else reply.NOT_HER
+        return self._finish("blocked", "not Margaret", [text],
+                            speaker=verdict.speaker, flags=list(verdict.flags))

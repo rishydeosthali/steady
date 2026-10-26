@@ -25,7 +25,9 @@ DECLINE = "Okay."
 NOTHING = "There is nothing new to recap yet."
 _SUMMARY_ASK = re.compile(
     r"\b(summary|summarize|summarise|recap)\b|"
-    r"what (just )?happened|what did (we|you) do|catch me up",
+    r"what (just )?happened|what did (we|you) do|catch me up|"
+    r"\blog\s+history\b|\b(?:the|our|my|chat|decision|activity)\s+log\b|"
+    r"\b(?:the|our|my)\s+history\b",
     re.IGNORECASE,
 )
 
@@ -128,6 +130,10 @@ def _beat(event: dict[str, Any]) -> tuple[str, str, str] | None:
 
     if "Paying is not turned on" in reason:
         return ("blocked", "pay", "You asked me to pay something. Paying is not turned on, so I did not send money.")
+    if reason == "not Margaret":
+        return ("blocked", "outsider",
+                "Someone asked for something I only do for you. "
+                "I did not share account details or skip a caregiver check.")
 
     if kind == "contemplate" and "Checked whether" in reason:
         return ("check", who or reason, _sentence(reason))

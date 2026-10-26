@@ -190,7 +190,10 @@ def test_recap_groups_repeats_and_skips_internal_notes():
 def test_asks_for_summary_is_code_not_the_model():
     assert asks_for_summary("Can I have a summary?")
     assert asks_for_summary("what happened")
+    assert asks_for_summary("show me the log history")
+    assert asks_for_summary("what's our log")
     assert not asks_for_summary("what bills do I have")
+    assert not asks_for_summary("how much money do we have")
     assert not asks_for_summary("yes")
 
 

@@ -28,7 +28,9 @@ from .money import cents, money
 
 YES_WORDS = r"yes|yes please|yeah|yep|ok|okay|sure|go ahead|yeah go ahead|yes go ahead|please do"
 NO_WORDS = r"no|no thanks|cancel|undo|stop|don't|do not"
-REPLY_RE = re.compile(rf"\s*({YES_WORDS}|{NO_WORDS})(?:\s+([a-fA-F0-9]{{8}}))?[.!]?\s*", re.I)
+# Leading decision only. Extra words after YES/NO are ramble, not a new choice.
+# "forwarded: YES" and "maybe yes" do not match because YES is not first.
+REPLY_RE = re.compile(rf"^\s*({YES_WORDS}|{NO_WORDS})(?:\s+([0-9A-Fa-f]{{8}}))?\b", re.I)
 MAX_EMAIL_ATTEMPTS = 5
 CANCELLABLE = {"awaiting_user", "awaiting_caregiver", "scheduled"}
 
@@ -118,6 +120,20 @@ class PaymentService:
     def _emit(self, state, body, job=None, kind="notification"):
         state["outbox"].append({"id":uuid.uuid4().hex, "body":body, "kind":kind,
                                  "request_id":job["id"] if job else None, "status":"pending"})
+
+    def _queued_readback(self, state, job_id):
+        return any(item.get("kind") == "readback" and item.get("request_id") == job_id
+                   and item.get("status") in {"pending", "awaiting_session"}
+                   for item in state["outbox"])
+
+    def _close_queued_readbacks(self, state, job_id, status="sent"):
+        closed = False
+        for item in state["outbox"]:
+            if item.get("kind") == "readback" and item.get("request_id") == job_id \
+                    and item.get("status") in {"pending", "awaiting_session"}:
+                item["status"] = status
+                closed = True
+        return closed
 
     def _invoices(self):
         invoices = self.biller.invoices(self.customer_ref)
@@ -323,7 +339,7 @@ class PaymentService:
                 seen = {(j["invoice_id"],j["invoice_version"]) for j in state["jobs"].values()}
                 for bill in sorted(invoices,key=lambda b:(b["due_date"],b["id"])):
                     delta = (date.fromisoformat(bill["due_date"])-date.fromisoformat(today)).days
-                    if bill["status"] != "unpaid" or (bill["id"],bill["version"]) in seen or delta > 3:
+                    if bill["status"] != "unpaid" or (bill["id"],bill["version"]) in seen or delta < 0 or delta > 3:
                         continue
                     when = self._plan(state,bill,invoices,bank)
                     known = bill["payee"] in self.known_payees and bill["amount_cents"] <= self.max_cents
@@ -339,24 +355,15 @@ class PaymentService:
                            "expires_on":min(bill["due_date"],(date.fromisoformat(today)+timedelta(days=1)).isoformat()),
                            "idempotency_key":uuid.uuid4().hex}
                     state["jobs"][ref] = job
-                    amount = money(bill["amount_cents"])
                     if allowed:
-                        when_text = "today" if when == today else day(when)
                         reason = " after your deposit arrives" if self._after_deposit(state,bank,when) else ""
-                        self._emit(state,f"Your {amount} {bill['payee']} bill is due {day(bill['due_date'])}. "
-                                   f"I recommend paying it {when_text}{reason}, so you keep at least "
-                                   f"{money(self.buffer)} in your account. Would you like me to schedule it? "
-                                   f"Reply YES or NO. (Ref {ref})",job,"readback")
+                        self._emit(state, self._readback_text(state, job, reason), job, "readback")
                         self._audit(state,"proposal_from_external_invoice",job)
                         break
                     if not known:
-                        text = (f"Your {amount} {bill['payee']} bill is due {day(bill['due_date'])}. It is a new "
-                                "or unusually large payee, so I won't schedule it myself. Nothing has been paid.")
-                    else:
-                        text = (f"Your {amount} {bill['payee']} bill is due {day(bill['due_date'])}. I couldn't find "
-                                f"a day to pay it on time and still keep your {money(self.buffer)} cushion, so I "
-                                f"haven't scheduled anything. Please talk it over with {self.caregiver_name}.")
-                    self._emit(state,text,job)
+                        self._emit(state,(f"Your {money(bill['amount_cents'])} {bill['payee']} bill is due {day(bill['due_date'])}. "
+                                         "It is a new or unusually large payee, so I won't schedule it myself. "
+                                         "Nothing has been paid."),job)
                     self._audit(state,"unsafe_or_family_review_required",job)
             except (BillerError,NessieError,ValueError) as exc:
                 self._audit(state,"monitor_unavailable_" + type(exc).__name__)
@@ -373,6 +380,45 @@ class PaymentService:
             return None, "There's nothing waiting for your answer right now."
         refs = ", ".join(f"{j['payee']} (Ref {j['id']})" for j in open_jobs)
         return None, f"Which bill do you mean? {refs}. Reply with YES or NO and the reference."
+
+    def _readback_text(self, state, job, reason=""):
+        today = self.today(state)
+        when = "today" if job["scheduled_for"] == today else day(job["scheduled_for"])
+        return (f"Your {money(job['amount_cents'])} {job['payee']} bill is due {day(job['due_date'])}. "
+                f"I recommend paying it {when}{reason}, so you keep at least "
+                f"{money(self.buffer)} in your account. Would you like me to schedule it? "
+                f"Reply YES or NO. (Ref {job['id']})")
+
+    def _open_user_job(self, state):
+        today = self.today(state)
+        open_jobs = [j for j in state["jobs"].values()
+                     if j["status"] == "awaiting_user" and today <= j["expires_on"]]
+        return open_jobs[0] if len(open_jobs) == 1 else None
+
+    def pending_readback(self):
+        """The one open YES/NO proposal. None if nothing is waiting for her."""
+        with self._tx() as (_, state):
+            job = self._open_user_job(state)
+            return self._readback_text(state, job) if job else None
+
+    def claim_readback(self):
+        """The open YES/NO text, after dropping any queued copy so flush cannot send it twice."""
+        with self._tx() as (_, state):
+            job = self._open_user_job(state)
+            if job is None:
+                return None
+            if self._close_queued_readbacks(state, job["id"]):
+                job["readback_delivered"] = True
+            return self._readback_text(state, job)
+
+    def remind(self):
+        """Queue the open YES/NO once. A copy already waiting to send is left alone."""
+        with self._tx() as (_, state):
+            job = self._open_user_job(state)
+            if job is None or self._queued_readback(state, job["id"]):
+                return False
+            self._emit(state, self._readback_text(state, job), job, "readback")
+            return True
 
     def snapshot_jobs(self):
         """Open payment jobs for the guide. Never includes a balance."""
@@ -405,9 +451,15 @@ class PaymentService:
         if not sid:
             return ["I need a signed phone reply with its message id before accepting a payment decision."]
         with self._tx() as (db,state):
-            match = REPLY_RE.fullmatch(body or "")
+            match = REPLY_RE.match(body or "")
             saying_no = bool(match) and re.fullmatch(NO_WORDS, match.group(1), re.I) is not None
-            if not match or (intent == "yes") == saying_no or intent not in {"yes","no","undo"}:
+            # A leading YES/NO is enough when the model labeled it, or called it
+            # unclear because she rambled after the word.
+            if not match:
+                return None
+            if intent in {"yes", "no"} and (intent == "yes") == saying_no:
+                return None
+            if intent not in {"yes", "no", "undo", "unclear"}:
                 return None
             job, _problem = self._pick(state, match.group(2), CANCELLABLE if saying_no else {"awaiting_user"})
             if job is None:
@@ -618,6 +670,7 @@ class PaymentService:
                 item["status"] = "sent"
                 if item["kind"] == "readback" and job:
                     job["readback_delivered"] = True
+                    self._close_queued_readbacks(state, job["id"], "superseded")
 
     def advance(self, days):
         if type(days) is not int or not 1 <= days <= 31:
