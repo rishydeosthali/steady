@@ -89,7 +89,7 @@ def _books(watcher):
     if watcher is not None:
         books.append(watcher.ledger)
     used = {getattr(b, "path", None) and b.path.resolve() for b in books}
-    if DEMO_LEDGER.exists() and DEMO_LEDGER.resolve() not in used:
+    if not getattr(watcher, "simulation_only", False) and DEMO_LEDGER.exists() and DEMO_LEDGER.resolve() not in used:
         extra = Ledger(DEMO_LEDGER)
         books.append(extra)
     try:

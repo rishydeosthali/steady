@@ -9,6 +9,17 @@ after explicit confirmation using Capital One's Nessie sandbox.
 See [the project brief](docs/PROJECT_CONTEXT.md) for features, architecture, and
 the HackTX demo, and [AGENTS.md](AGENTS.md) for collaboration and conflict handling.
 
+## Hosted scenario studio
+
+The original WhatsApp app has an opt-in persistent simulation dashboard. Add
+expenses, change bills, delay/settle income, advance the demo date, and save or
+reset scenarios through a website. Agent replies and payment checks share that
+same fictional account. No live banking writes occur; WhatsApp messages are real.
+
+Deploy the included `render.yaml` through Render's website for an always-on
+service with persistent storage and no local Cloudflare tunnel. See the
+[scenario studio guide](docs/SCENARIO_STUDIO.md) for setup and account steps.
+
 ## WhatsApp base agent
 
 Margaret texts Steady's WhatsApp number. Twilio POSTs to the app, the app reads
@@ -252,6 +263,23 @@ through the tunnel (403):
 | `GET /watch/events?consumer=planner&delivered=false` | Stored verdicts |
 | `POST /watch/decisions` | `{"payee", "decision", "amount", "payment_date"}`. Appends to the tape |
 | `POST /watch/check` | `{"merchant", "amount"}`. Judges a purchase she is considering |
+
+## Persistent autonomous goals
+
+Set `STEADY_AUTONOMY=1` to enable the goal coordinator in `backend.app`.
+It maintains a confirmed savings/budget goal in private SQLite memory, chooses
+tools with the model, observes their results, and resumes after changes or a
+scheduled check. With `STEADY_EXTERNAL_BILLER=1`, it also tracks each external
+invoice through verified simulated settlement and can replan funds-held bills
+with fresh senior and caregiver approvals.
+
+Text: `Save $300 by December 25, 2026, keep a $200 cushion, and allow $100 weekly
+for essentials.` Steady reads it back and asks for `CONFIRM GOAL <reference>`.
+`How is my budget?`, `PAUSE GOAL <reference>`, and `RESUME GOAL <reference>` work
+in the same signed WhatsApp chat. No savings transfer is performed.
+
+See [autonomous goals](docs/AUTONOMOUS_GOALS.md) for architecture, setup,
+limits, tests, and local inspection routes.
 
 ## Development
 

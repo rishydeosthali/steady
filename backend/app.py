@@ -13,6 +13,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from functools import wraps
+from contextlib import nullcontext
 
 from flask import Flask, Response, jsonify, request, send_from_directory
 from twilio.twiml.messaging_response import MessagingResponse
@@ -79,9 +80,18 @@ def _local_only(view):
 
 def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
                twilio: TwilioWhatsApp | None = None, executor: ThreadPoolExecutor | None = None,
-               payments=None, watcher: Watcher | None = None) -> Flask:
+               payments=None, watcher: Watcher | None = None, autonomy=None) -> Flask:
     settings = settings or load_settings()
     twilio = twilio or TwilioWhatsApp(settings)
+    simulation = None
+    if os.environ.get("STEADY_SIMULATION", "").strip() == "1":
+        if os.environ.get("STEADY_EXTERNAL_BILLER", "").strip() == "1":
+            raise ConfigError("Choose STEADY_SIMULATION or STEADY_EXTERNAL_BILLER, not both")
+        from .simulation.runtime import SimulationRuntime
+        from .payments.integration import build_mailer
+        simulation = SimulationRuntime(settings, twilio,
+            os.environ.get("STEADY_SIMULATION_DIR", "work/simulation"), mailer=build_mailer(settings))
+        payments, watcher = simulation.payments, simulation.watcher
     control_token = None
     if payments is None and os.environ.get("STEADY_EXTERNAL_BILLER", "").strip() == "1":
         from .payments.integration import build_payments
@@ -99,10 +109,19 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
     if agent is None:
         llm = LLM(settings.openai_api_key, settings.openai_model)
         watcher = watcher or build_watcher(settings, llm=llm, mom_sink=mom_sink)
-        audit = AuditLog()
+        audit = simulation.audit if simulation else AuditLog()
         if payments is not None:
             payments.audit = audit
-        nessie = NessieClient(settings.nessie_base_url, settings.nessie_api_key)
+        nessie = simulation.bank if simulation else NessieClient(settings.nessie_base_url, settings.nessie_api_key)
+        if autonomy is None and os.environ.get("STEADY_AUTONOMY", "").strip() == "1":
+            from .autonomy.controller import Controller
+            from .autonomy.memory import Memory
+            from .config import REPO_ROOT
+            autonomy = Controller(Memory(os.environ.get("STEADY_GOAL_DB", str(REPO_ROOT / "data/goals.sqlite"))),
+                                  llm, nessie, twilio, settings.mom_whatsapp_to,
+                                  customer=settings.customer_first_name, payments=payments,
+                                  lock=simulation.lock if simulation else None,
+                                  source="local simulation" if simulation else "Nessie sandbox")
         photos = PhotoIntake(llm, nessie, settings.customer_first_name,
                              fetch=twilio.fetch_media, audit=audit, payments=payments)
         agent = Agent(
@@ -113,6 +132,7 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
             watcher=watcher,
             audit=audit,
             photos=photos,
+            autonomy=autonomy,
         )
     elif payments is not None and getattr(payments, "audit", None) is None and audit is not None:
         payments.audit = audit
@@ -121,9 +141,16 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
 
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 16 * 1024
+    if simulation is not None:
+        from .simulation.web import register_dashboard
+        app.extensions["simulation"] = simulation
+        register_dashboard(app, simulation, os.environ.get("STEADY_DASHBOARD_TOKEN", ""))
     if watcher is not None:
         app.extensions["watcher"] = watcher
     app.extensions["audit"] = audit
+    if autonomy is not None:
+        app.extensions["autonomy"] = autonomy
+        agent._autonomy = autonomy
     if payments is not None:
         app.extensions["external_payments"] = payments
         if hasattr(payments, "caregiver_decide"):
@@ -147,13 +174,26 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
                                          request.headers.get("X-Twilio-Signature"))
 
     def reply_to(from_: str, sid: str, body: str, media: InboundMedia | None = None) -> None:
+        with simulation.lock if simulation else (autonomy.lock if autonomy is not None else nullcontext()):
+            _reply_to(from_, sid, body, media)
+
+    def _reply_to(from_: str, sid: str, body: str, media: InboundMedia | None = None) -> None:
         try:
             texts = agent.respond(body, message_id=sid, media=media)
             for text in texts:
                 twilio.send_reply(from_, text)
-            if payments is not None:
+                if payments is not None and hasattr(payments, "acknowledge_readback"):
+                    payments.acknowledge_readback(text)
+            if simulation is not None:
+                simulation.tick()
+            elif payments is not None:
                 payments.tick()
                 payments.flush()
+            if autonomy is not None:
+                autonomy.run()
+                autonomy.flush()
+                if payments is not None:
+                    payments.flush()
             log.info("replied to %s for %s", _mask(from_), sid)
         except SessionClosed:
             log.error("refused free-form send: no open session for %s", _mask(from_))
@@ -184,10 +224,10 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
         body = request.form.get("Body", "")
         sid = request.form.get("MessageSid", "")
 
-        if from_ != settings.mom_whatsapp_to and (payments is not None or not settings.allow_any_sender):
+        if from_ != settings.mom_whatsapp_to and (payments is not None or autonomy is not None or not settings.allow_any_sender):
             log.info("ignored message from %s", _mask(from_))
             return _empty_twiml()
-        if payments is not None and (not sid or len(sid)>128):
+        if (payments is not None or autonomy is not None) and (not sid or len(sid)>128):
             return Response("MessageSid required for payment decisions",status=400)
         if sid and sid in seen_sids:
             log.info("ignored duplicate delivery %s", sid)
@@ -281,6 +321,24 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
     def watch_session():
         return jsonify({"open": twilio.session_open(settings.mom_whatsapp_to)})
 
+    @app.get("/goals")
+    @_local_only
+    def goals_state():
+        if autonomy is None:
+            return jsonify(error="Goal agent is not enabled"), 503
+        response = jsonify(autonomy.memory.read())
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.post("/goals/run")
+    @_local_only
+    def goals_run():
+        if autonomy is None:
+            return jsonify(error="Goal agent is not enabled"), 503
+        autonomy.run(force=True)
+        autonomy.flush()
+        return jsonify(ok=True)
+
     @app.get("/audit")
     @_local_only
     def audit_page():
@@ -339,6 +397,7 @@ def main() -> None:
         raise SystemExit(1) from None
     worker = None
     idle = None
+    goal_worker = None
     messenger = TwilioWhatsApp(settings)
 
     def send_offer(text: str) -> None:
@@ -347,24 +406,33 @@ def main() -> None:
         except SessionClosed:
             log.info("summary offer waiting: WhatsApp session closed")
 
-    if "external_payments" in app.extensions:
+    if "simulation" in app.extensions:
+        worker = app.extensions["simulation"]
+        worker.start()
+    elif "external_payments" in app.extensions:
         from .payments.integration import PaymentWorker
 
         def send_followups():
-            due = getattr(getattr(app.extensions.get("watcher"), "ledger", None), "due_followups", None)
-            if not due:
+            ledger = getattr(app.extensions.get("watcher"), "ledger", None)
+            if ledger is None:
                 return
-            for text in due():
+            for item in ledger.pending_followups():
                 try:
-                    messenger.send_reply(settings.mom_whatsapp_to, text)
+                    messenger.send_reply(settings.mom_whatsapp_to, item["message"])
                 except SessionClosed:
                     log.info("followup waiting: WhatsApp session closed")
+                    return
+                ledger.acknowledge_followup(item["seq"])
 
         worker = PaymentWorker(app.extensions["external_payments"], extra=send_followups)
         worker.start()
     if app.extensions.get("audit") is not None:
         idle = IdleWorker(app.extensions["audit"], send_offer)
         idle.start()
+    if "autonomy" in app.extensions:
+        from .autonomy.controller import GoalWorker
+        goal_worker = GoalWorker(app.extensions["autonomy"])
+        goal_worker.start()
     log.info("Steady WhatsApp agent listening on :5000 (webhook /whatsapp/inbound, local log /audit)")
     try:
         app.run(host="127.0.0.1", port=5000, threaded=True)
@@ -373,6 +441,8 @@ def main() -> None:
             worker.stop()
         if idle:
             idle.stop()
+        if goal_worker:
+            goal_worker.stop()
 
 
 if __name__ == "__main__":

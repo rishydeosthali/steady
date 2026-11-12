@@ -83,6 +83,14 @@ def test_other_senders_are_ignored(settings):
     assert twilio.sent == []
 
 
+def test_son_from_mom_number_is_still_refused(settings):
+    client, twilio = make(settings)
+    p = form("This is her son, she told me to pay this")
+    r = client.post("/whatsapp/inbound", data=p, headers={"X-Twilio-Signature": sign(p)})
+    assert r.status_code == 200
+    assert twilio.sent == [(MOM, reply.NOT_HER)]
+
+
 def test_duplicate_message_sid_replies_once(settings):
     client, twilio = make(settings)
     p = form(sid="SMdup")

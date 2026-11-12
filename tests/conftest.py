@@ -38,16 +38,23 @@ class FakeLLM:
     model = "fake"
 
     def __init__(self, intent: dict | None = None, reply: dict | None = None,
-                 tools: dict | None = None, photo: dict | None = None):
+                 tools: dict | None = None, photo: dict | None = None,
+                 speaker: dict | None = None):
         self.intent = intent
         self.reply = reply
         self.tools = tools
         self.photo = photo
+        self.speaker = speaker
         self.calls: list[tuple[str, str, str]] = []   # (schema, system, user)
         self.images: list[tuple[str, bytes]] = []
 
     def json_completion(self, system, user, schema_name, schema):
         self.calls.append((schema_name, system, user))
+        if schema_name == "steady_speaker":
+            # Existing tests do not script this. Default: it is Margaret.
+            return self.speaker if self.speaker is not None else {
+                "speaker": "margaret", "confidence": 0.95, "flags": [],
+            }
         if schema_name == "steady_intent":
             data = self.intent
         elif schema_name == "steady_tools":

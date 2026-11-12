@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import threading
 import time
 from pathlib import Path
@@ -45,6 +46,8 @@ class TwilioWhatsApp:
         self._s = settings
         self._client = client or Client(settings.twilio_account_sid, settings.twilio_auth_token)
         self._validator = RequestValidator(settings.twilio_auth_token)
+        if session_path == SESSION_PATH and os.environ.get("STEADY_SIMULATION_DIR"):
+            session_path = Path(os.environ["STEADY_SIMULATION_DIR"]) / "sessions.json"
         self._session_path = Path(session_path) if session_path else None
         self._last_inbound: dict[str, float] = self._read_sessions()
         self._lock = threading.Lock()

@@ -57,7 +57,9 @@ def load_settings(env_file: Path | None = None) -> Settings:
     """
     load_dotenv(env_file or REPO_ROOT / ".env", override=False)
 
-    missing = [name for name in REQUIRED_VARS if not os.environ.get(name, "").strip()]
+    simulation = os.environ.get("STEADY_SIMULATION", "").strip() == "1"
+    required = [name for name in REQUIRED_VARS if not (simulation and name.startswith("NESSIE_"))]
+    missing = [name for name in required if not os.environ.get(name, "").strip()]
     if missing:
         raise ConfigError(
             "Missing required settings in .env: " + ", ".join(missing) + ". "
@@ -73,11 +75,12 @@ def load_settings(env_file: Path | None = None) -> Settings:
         twilio_whatsapp_from=get("TWILIO_WHATSAPP_FROM"),
         mom_whatsapp_to=get("MOM_WHATSAPP_TO"),
         twilio_content_sid=get("TWILIO_CONTENT_SID"),
-        nessie_api_key=get("NESSIE_API_KEY"),
-        nessie_base_url=get("NESSIE_BASE_URL").rstrip("/"),
+        nessie_api_key=os.environ.get("NESSIE_API_KEY", "") if simulation else get("NESSIE_API_KEY"),
+        nessie_base_url=os.environ.get("NESSIE_BASE_URL", "").rstrip("/") if simulation else get("NESSIE_BASE_URL").rstrip("/"),
         openai_api_key=get("OPENAI_API_KEY"),
         openai_model=os.environ.get("OPENAI_MODEL", "").strip() or "gpt-4o-mini",
-        public_base_url=os.environ.get("PUBLIC_BASE_URL", "").strip().rstrip("/"),
+        public_base_url=(os.environ.get("PUBLIC_BASE_URL", "").strip()
+                         or os.environ.get("RENDER_EXTERNAL_URL", "").strip()).rstrip("/"),
         allow_any_sender=os.environ.get("ALLOW_ANY_SENDER", "").strip() == "1",
         customer_first_name=os.environ.get("STEADY_CUSTOMER_NAME", "").strip() or "Margaret",
         content_variables=_content_variables(),

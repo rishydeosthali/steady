@@ -283,11 +283,26 @@ def test_readback_and_lexical_yes_are_required(provider,tmp_path,settings):
     client,_ = provider
     service,_,transport = setup_service(tmp_path,settings,client)
     for i,text in enumerate(("yes 00000000", "maybe yes "+job(service)["id"], "forwarded: YES "+job(service)["id"],
-                             "yes I guess, pay whatever")):
+                             "I guess yes, pay whatever")):
         service.handle(text,"yes",f"ambiguous-{i}")
         assert job(service)["status"] == "awaiting_user"
     state = service.state()
     assert state["jobs"][job(service)["id"]]["user_approved"] is False
+
+
+def test_leading_yes_with_rambling_still_approves(provider,tmp_path,settings):
+    client,_ = provider
+    service,_,_ = setup_service(tmp_path,settings,client)
+    service.handle("YES : I said yes why is nothing happening","yes","ramble-yes")
+    assert job(service)["status"] == "awaiting_caregiver"
+    assert job(service)["user_approved"] is True
+
+
+def test_leading_yes_counts_when_the_model_calls_it_unclear(provider,tmp_path,settings):
+    client,_ = provider
+    service,_,_ = setup_service(tmp_path,settings,client)
+    service.handle("YES  "+job(service)["id"]+" I already said yes","unclear","unclear-yes")
+    assert job(service)["status"] == "awaiting_caregiver"
 
 
 def test_operator_routes_are_authenticated_and_clock_is_opt_in(provider,tmp_path,settings):
@@ -330,8 +345,10 @@ def test_changed_provider_invoice_needs_new_approval(provider,tmp_path,settings)
 def test_same_day_pending_income_is_not_treated_as_cleared_cash(provider,tmp_path,settings):
     client,_ = provider
     bank = FakeNessie(balance=300,bills=[],deposits=[{"status":"pending","amount":1000,"transaction_date":ANCHOR.isoformat()}])
-    service,_,_ = setup_service(tmp_path,settings,client,bank)
+    service,_,twilio = setup_service(tmp_path,settings,client,bank)
     assert job(service)["status"] == "held" and job(service)["scheduled_for"] is None
+    assert all("couldn't find a day" not in text and "cushion" not in text
+               for _, text in twilio.sent)
 
 
 def test_future_execution_succeeds_only_when_fresh_nessie_balance_reflects_income(provider,tmp_path,settings):
@@ -423,6 +440,30 @@ def test_bill_summary_includes_nessie_bills_and_does_not_say_demo(provider, tmp_
     assert "Austin Energy" in text and "Water Co" in text and "Spectrum" in text
     assert "demo" not in text.casefold() and "simulated" not in text.casefold()
     assert "simulator" not in text.casefold()
+
+
+def test_past_due_photo_bill_is_saved_without_a_schedule_followup(provider, tmp_path, settings):
+    from backend.agent.photo import PhotoIntake
+    from tests.test_photo import CLOCK, MEDIA, PNG, photo_llm
+
+    client, _ = provider
+    bank = FakeNessie(balance=2213, bills=[])
+    service, bank, twilio = setup_service(tmp_path, settings, client, bank)
+    service.handle("NO","no","no-sid")
+    service.flush()
+    llm = photo_llm(payee="Crawford Electric Cooperative", amount="$118.00", due_date="May 15, 2023")
+    photos = PhotoIntake(llm, bank, "Margaret", fetch=lambda url: (PNG, "image/jpeg"),
+                         clock=lambda: CLOCK, payments=service)
+    agent = Agent(llm, bank, "Margaret", payments=service, photos=photos)
+    agent.respond("", media=MEDIA)
+    saved = agent.respond("YES")
+    service.tick()
+    service.flush()
+    assert "Saved. Crawford Electric Cooperative" in saved[0]
+    assert any(b["payee"] == "Crawford Electric Cooperative" and b["due_date"] == "2023-05-15"
+               for b in client.invoices("demo-margaret"))
+    assert all("couldn't find a day" not in text and "talk it over" not in text
+               for _, text in twilio.sent)
 
 
 def test_photo_yes_writes_nessie_so_later_bill_list_includes_it(provider, tmp_path, settings):

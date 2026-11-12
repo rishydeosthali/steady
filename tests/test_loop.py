@@ -91,7 +91,7 @@ def test_missing_customer_replies_cannot_see_and_does_not_create_anything():
     out = agent(llm, nessie).respond("balance?")
     assert out == [reply.CANT_SEE_ACCOUNT]
     assert nessie.calls == ["resolve"]
-    assert [c[0] for c in llm.calls] == ["steady_intent"]   # no reply-writer call
+    assert [c[0] for c in llm.calls] == ["steady_speaker", "steady_intent"]   # no reply-writer call
 
 
 def test_pay_request_says_not_turned_on_and_never_touches_nessie():
