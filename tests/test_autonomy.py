@@ -278,6 +278,26 @@ def test_claiming_readback_is_not_delivery_and_failed_sends_retry(provider, tmp_
     assert job(service)["readback_delivered"] and len(twilio.sent) == 1
 
 
+def test_receipt_notification_cannot_overtake_failed_approval_notice(provider, tmp_path, settings):
+    biller, _ = provider
+    service, _, _ = setup_service(tmp_path, settings, biller)
+    service.flush()
+    service.twilio.sent.clear()
+    with service._tx() as (_, state):
+        service._emit(state, "Approval recorded; execution is next.")
+        service._emit(state, "Execution finished; receipt is available.")
+    original = service.twilio.send_reply
+    service.twilio.send_reply = lambda *args: (_ for _ in ()).throw(RuntimeError("temporary"))
+    service.flush()
+    state = service.state()
+    assert state["outbox"][-2]["status"] == "failed"
+    assert state["outbox"][-1]["status"] == "pending"
+    service.twilio.send_reply = original
+    service.flush()
+    assert [text for _, text in service.twilio.sent] == [
+        "Approval recorded; execution is next.", "Execution finished; receipt is available."]
+
+
 def test_agent_reasons_over_funds_recovery_and_tracks_verified_receipt(provider, tmp_path, settings):
     biller, _ = provider
     bank = FakeNessie(balance=210, bills=[])

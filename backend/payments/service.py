@@ -744,7 +744,9 @@ class PaymentService:
                 except Exception as exc:
                     item["status"] = "failed"
                     self._audit(state,"notification_failed_"+type(exc).__name__,job)
-                    continue
+                    # Preserve causal notification order across retries. A
+                    # later receipt must not overtake its approval notice.
+                    break
                 item["status"] = "sent"
                 if item["kind"] == "readback" and job:
                     job["readback_delivered"] = True

@@ -11,6 +11,7 @@ import re
 import threading
 import time
 import uuid
+from decimal import Decimal
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -92,7 +93,14 @@ class Controller:
         """Only called after the configured senior and speaker checks pass."""
         text = (body or "").strip()
         command = re.fullmatch(r"(CONFIRM GOAL|PAUSE GOAL|RESUME GOAL)\s+([A-F0-9]{8})", text, re.I)
-        relevant = command or re.search(r"\b(budget|save|savings?|goal)\b", text, re.I)
+        state = self.memory.read()
+        intake = state.get("intake", [])
+        # A short amount/date answer belongs to the unfinished goal. Payment
+        # decisions and unrelated questions must still reach their own handlers.
+        followup = bool(intake and re.search(r"\d|\bchristmas\b", text, re.I)
+                        and not re.search(r"\b(pay|bill|balance|cancel|yes|no|undo|stop)\b", text, re.I)
+                        and not re.search(r"\b(what|how|why|show)\b", text, re.I))
+        relevant = command or followup or re.search(r"\b(budget|save|savings?|saving|goal)\b", text, re.I)
         if not relevant:
             return None
         if not sid:
@@ -103,8 +111,10 @@ class Controller:
                 return []
             if command:
                 result = self._command(command.group(1).upper(), command.group(2).upper())
-            elif re.search(r"\b(save|saving|goal|budget)\b", text, re.I) and re.search(r"\$|\bdollars?\b", text, re.I):
-                result = self._draft(text)
+            elif followup or (re.search(r"\b(save|saving|goal|budget)\b", text, re.I)
+                              and not re.search(r"\b(what|recall|status|continue|discussing|already)\b", text, re.I)):
+                turns = (intake + [text[:1000]])[-6:]
+                result = self._draft("\n".join(turns))
             else:
                 result = self._status()
             with self.memory.transaction() as state:
@@ -112,19 +122,28 @@ class Controller:
             return result
 
     def _draft(self, text):
+        with self.memory.transaction() as state:
+            state["intake"] = text.splitlines()[-6:]
         try:
             raw = self.llm.json_completion(GOAL_PROMPT, text[:2000], "steady_goal", GOAL_SCHEMA)
             values = {}
             for name in ("target", "buffer", "weekly_essentials"):
                 token = raw.get(name) or ""
                 if token and (not isinstance(token, str) or not re.search(
-                        r"(?<![\w.,])" + re.escape(token) + r"(?![\w.,])", text, re.I)):
+                        r"(?<![\w.,])" + re.escape(token) + r"(?!\w|[.,]\d)", text, re.I)):
                     raise ValueError("Unsubstantiated goal value")
                 cleaned = re.sub(r"\s*(dollars?|bucks)\s*$", "", token, flags=re.I).strip().lstrip("$").replace(",", "")
+                if re.fullmatch(r"\d+(?:\.\d+)?\s*[kK]", cleaned):
+                    cleaned = str(Decimal(cleaned[:-1].strip()) * 1000)
                 values[name] = cents(cleaned) if token else None
             phrase = raw.get("deadline") or ""
-            if not phrase or phrase.casefold() not in text.casefold() or not values["target"]:
-                raise ValueError("Missing target or deadline")
+            if not values["target"]:
+                return ["What total amount would you like to save for this goal?"]
+            if not phrase:
+                return [f"I have your target as {money(values['target'])}. By what date would you like to reach it?"]
+            if phrase.casefold() not in text.casefold():
+                raise ValueError("Unsubstantiated deadline")
+            phrase = re.sub(r"^(?:by|on)\s+", "", phrase.strip(), flags=re.I)
             today = date.fromisoformat(self.today())
             if phrase.casefold() == "christmas":
                 deadline = date(today.year, 12, 25)
@@ -137,6 +156,10 @@ class Controller:
             buffer = values["buffer"] if values["buffer"] is not None else 20000
             if buffer < 20000 or values["target"] > 100000000:
                 raise ValueError("Unsupported goal")
+            if values["weekly_essentials"] is None:
+                return [f"Your target is {money(values['target'])} by {deadline.isoformat()}. "
+                        "How much should I allow each week for essentials outside your listed bills? "
+                        f"I will protect a {money(buffer)} cushion. No goal is active yet."]
         except (LLMError, ValueError, TypeError, AttributeError):
             return ["Tell me the amount you want to save, a clear deadline, and your weekly essentials allowance. "
                     "For example: Save $300 by December 25, 2026, keep a $200 cushion, "
@@ -148,6 +171,7 @@ class Controller:
                     priority="essential bills first", created_at=time.time())
         with self.memory.transaction() as state:
             state["drafts"] = {ref: goal}
+            state["intake"] = []
         weekly = (money(values["weekly_essentials"]) + " each week for essentials outside listed bills"
                   if values["weekly_essentials"] is not None else "weekly essentials not supplied yet")
         return [f"Your proposed goal: keep {money(goal['target_cents'])} available for savings by "
@@ -171,6 +195,7 @@ class Controller:
                 draft["status"] = "active"
                 state["goals"][ref] = draft
                 state["drafts"] = {}
+                state["intake"] = []
                 result = f"Goal {ref} is active. I will check it as your finances change. No money has moved."
             else:
                 goal = state["goals"].get(ref)
@@ -190,6 +215,12 @@ class Controller:
         state = self.memory.read()
         goals = [g for g in state["goals"].values() if g["kind"] == "budget" and g["status"] in {"active", "paused", "needs_review"}]
         if not goals:
+            if state["drafts"]:
+                ref, goal = next(iter(state["drafts"].items()))
+                return [f"Your proposed target is {money(goal['target_cents'])} by {goal['deadline']}. "
+                        f"Reply CONFIRM GOAL {ref} to activate monitoring. No money has moved."]
+            if state.get("intake"):
+                return self._draft("\n".join(state["intake"]))
             return ["Tell me your savings target, deadline, cushion, and weekly essentials allowance to start a budget goal."]
         if goals[0]["deadline"] < self.today():
             return ["Your savings deadline has passed. Send a revised goal if you want a new plan. "
