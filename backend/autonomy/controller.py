@@ -135,7 +135,7 @@ class Controller:
             if command:
                 result = self._command(command.group(1).upper(), command.group(2).upper())
             elif followup or (re.search(r"\b(save|saving|goal|budget)\b", text, re.I)
-                              and not re.search(r"\b(what|recall|status|continue|discussing|already)\b", text, re.I)):
+                              and not re.search(r"\b(what|how|why|show|progress|recall|status|continue|discussing|already)\b", text, re.I)):
                 turns = (intake + [text[:1000]])[-6:]
                 result = self._draft("\n".join(turns))
             else:
@@ -238,6 +238,8 @@ class Controller:
         state = self.memory.read()
         goals = [g for g in state["goals"].values() if g["kind"] == "budget" and g["status"] in {"active", "paused", "needs_review"}]
         if not goals:
+            if self.actions is not None and self.actions.snapshot()["goals"]:
+                return [self.actions.review()["text"]]
             if state["drafts"]:
                 ref, goal = next(iter(state["drafts"].items()))
                 return [f"Your proposed target is {money(goal['target_cents'])} by {goal['deadline']}. "
