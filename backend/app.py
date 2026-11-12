@@ -128,6 +128,7 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
                                   llm, nessie, twilio, settings.recipient,
                                   customer=settings.customer_first_name, payments=payments,
                                   lock=simulation.lock if simulation else None,
+                                  actions=simulation.budget if simulation else None,
                                   source="local simulation" if simulation else "Nessie sandbox")
         photos = PhotoIntake(llm, nessie, settings.customer_first_name,
                              fetch=twilio.fetch_media, audit=audit, payments=payments)

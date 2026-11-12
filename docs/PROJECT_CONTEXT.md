@@ -51,6 +51,18 @@ or assumptions about current Nessie API capabilities.
 
 **The LLM handles judgment and language; code handles money.** These are logical
 responsibilities, not a requirement to deploy six separate services or LLMs.
+
+### Simulated budgeting actions
+
+In local simulation, `backend/simulation/budget_actions.py` adds confirmed named
+savings policies, categorized monthly spending caps and atomic fictional
+checking-to-pot allocations. `backend/autonomy/controller.py` selects spending
+review and allocation tools from current eligibility and observes their results;
+code owns percentages, reserves, destinations, source credits and target limits.
+The shared account SQLite record stores the policy, pot balances and receipts.
+The studio exposes actual simulated progress separately from legacy projected
+savings capacity. This adds no real banking writes; details and rehearsal steps
+are in `docs/SIMULATED_BUDGETING.md`.
 The application stack and division of implementation roles are still open.
 
 ## Three-minute demo target
