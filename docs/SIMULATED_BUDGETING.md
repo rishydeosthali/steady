@@ -83,3 +83,10 @@ restart, batch rollback, and three approved simulated bill payments alongside
 savings allocations. Existing signed Slack approval and cancellation tests run
 unchanged. Real-model tests additionally verify actual selection of the new
 allocation tools; no external messages are sent in those local rehearsals.
+
+Live Slack rehearsal on November 12, 2026 confirmed a $22,000 car/10% policy
+and $1,000 emergency/5% policy. A $2,500 deposit produced $250/$125 allocations;
+a second $500 deposit independently increased the pots to $300/$150, with four
+source-bound receipts. Busy-week and vacation scenarios recorded $470 against
+the $200 vacation cap, and the agent proactively recommended pausing further
+vacation spending. These were fictional account changes, not real transfers.

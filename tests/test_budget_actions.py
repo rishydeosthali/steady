@@ -231,3 +231,12 @@ def test_concurrent_retries_allocate_each_source_once(system):
         results = list(pool.map(lambda _:runtime.budget.allocate("car"), range(12)))
     assert sum(r["allocated_cents"] for r in results) == 10000
     assert len(runtime.store.state()["savings_allocations"]) == 1
+
+
+def test_plain_budget_questions_recall_named_plan_without_starting_new_intake(system):
+    runtime, controller, _ = system
+    confirm(runtime, controller)
+    assert "$22,000.00" in controller.handle("How is my budget?", "status-how")[0]
+    assert "$22,000.00" in controller.handle("What is my car goal?", "status-car")[0]
+    assert not controller.memory.read().get("intake")
+    assert runtime.budget.snapshot()["active"]
