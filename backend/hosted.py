@@ -29,7 +29,7 @@ def main():
     def offer(text):
         with runtime.lock:
             try:
-                messenger.send_reply(settings.mom_whatsapp_to, text)
+                messenger.send_reply(settings.recipient, text)
             except SessionClosed:
                 pass
 

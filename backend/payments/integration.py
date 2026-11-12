@@ -19,6 +19,9 @@ log = logging.getLogger(__name__)
 
 
 def build_mailer(settings):
+    if settings.channel == "slack" and settings.slack_caregiver_user_id:
+        from ..slack_client import SlackCaregiver, SlackMessenger
+        return SlackCaregiver(SlackMessenger(settings))
     resend_key = os.environ.get("RESEND_API_KEY", "").strip()
     required = ("CAREGIVER_EMAIL",) if resend_key else ("GMAIL_ADDRESS","GMAIL_APP_PASSWORD","CAREGIVER_EMAIL")
     missing = [name for name in required if not os.environ.get(name, "").strip()]

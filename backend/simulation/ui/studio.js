@@ -57,8 +57,9 @@ function render(next) {
   $("upcoming").textContent=money(unpaid.reduce((n,b)=>n+b.amount_cents,0));
   $("bills-count").textContent=unpaid.length+" unpaid bill"+(unpaid.length===1?"":"s");
   $("session-label").textContent=state.session_open?"Ready to receive":"Waiting for your HI";
-  $("session-note").textContent=state.session_open?"Reply on your phone":"Text HI on WhatsApp to open the session";
-  $("conversation-note").textContent=state.session_open?"WhatsApp session is open":"Messages wait until you text HI";
+  $("session-note").textContent=state.channel==="slack"?"Send a direct message to Steady in Slack":state.session_open?"Reply on your phone":"Text HI on WhatsApp to open the session";
+  $("conversation-note").textContent=state.channel==="slack"?"Slack direct messages":state.session_open?"WhatsApp session is open":"Messages wait until you text HI";
+  $("channel-label").textContent=state.channel==="slack"?"SLACK":"WHATSAPP";
   $("worker-status").textContent=state.last_error?"Last check needs attention: "+state.last_error:
     state.last_check?"Last checked "+new Date(state.last_check).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})+" · Background checks every 10 seconds":"Ready · background checks run on the hosted server";
   if(!previous || previous.run_id!==state.run_id || $("expense-date").value===previous.today)$("expense-date").value=state.today;

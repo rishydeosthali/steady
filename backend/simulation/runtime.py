@@ -124,7 +124,7 @@ class SimulationRuntime:
         self.biller = SimulatedBiller(self.store)
         self.audit = audit or AuditLog(self.directory / "audit.sqlite3")
         self.payments = SimulationPayments(self.directory / "payments.sqlite3", self.biller, self.bank,
-            twilio, settings.mom_whatsapp_to, runtime=self, mailer=mailer,
+            twilio, settings.recipient, runtime=self, mailer=mailer,
             customer_name=settings.customer_first_name, audit=self.audit)
         self.watcher = Watcher(Ledger(self.directory / "watch.sqlite3"), self.pull,
                                today=lambda: date.fromisoformat(self.store.state()["today"]))
@@ -165,13 +165,13 @@ class SimulationRuntime:
                 raise
 
     def flush_alerts(self):
-        if not self.twilio.session_open(self.settings.mom_whatsapp_to):
+        if not self.twilio.session_open(self.settings.recipient):
             return
         for event in self.watcher.ledger.events("mom", False):
             if event.get("resolved") or not event.get("text"):
                 continue
             try:
-                sid = self.twilio.send_reply(self.settings.mom_whatsapp_to, event["text"])
+                sid = self.twilio.send_reply(self.settings.recipient, event["text"])
             except Exception as exc:
                 self.last_error = type(exc).__name__
                 return
@@ -183,7 +183,7 @@ class SimulationRuntime:
                 (datetime.now(ZoneInfo("UTC")).isoformat(timespec="seconds"),)).fetchall()
         for row in pending:
             try:
-                self.twilio.send_reply(self.settings.mom_whatsapp_to, row["message"])
+                self.twilio.send_reply(self.settings.recipient, row["message"])
             except Exception as exc:
                 self.last_error = type(exc).__name__
                 return
@@ -223,13 +223,13 @@ class SimulationRuntime:
             messages = [{"id":m["id"], "text":m["body"], "status":m["status"], "kind":m["kind"]}
                         for m in payments["outbox"] if m["kind"] != "caregiver_email"]
             return {"simulation": True, "biller_mode":"local_simulation", "run_id":account["run_id"],
-                    "today":account["today"], "name":account["name"],
+                    "today":account["today"], "name":account["name"], "channel":self.settings.channel,
                     "balance_cents":account["balance_cents"]-paid, "buffer_cents":self.payments.buffer,
                     "invoices":account["invoices"], "deposits":account["deposits"],
                     "purchases":account["purchases"][-30:], "receipts":list(account["receipts"].values()),
                     "jobs":jobs, "messages":messages[-50:], "alerts":alerts[-50:],
                     "events":account["events"][-50:], "audit":self.audit.events()[-60:],
-                    "session_open":self.twilio.session_open(self.settings.mom_whatsapp_to),
+                    "session_open":self.twilio.session_open(self.settings.recipient),
                     "last_error":self.last_error, "last_check":self.last_check,
                     "presets":PRESETS, "saved":self.saved()}
 

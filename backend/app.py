@@ -82,7 +82,13 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
                twilio: TwilioWhatsApp | None = None, executor: ThreadPoolExecutor | None = None,
                payments=None, watcher: Watcher | None = None, autonomy=None) -> Flask:
     settings = settings or load_settings()
-    twilio = twilio or TwilioWhatsApp(settings)
+    if settings.channel == "slack":
+        from .slack_client import SlackMessenger
+        if os.environ.get("STEADY_SIMULATION", "").strip() != "1":
+            raise ConfigError("Slack currently requires STEADY_SIMULATION=1")
+        twilio = twilio or SlackMessenger(settings)
+    else:
+        twilio = twilio or TwilioWhatsApp(settings)
     simulation = None
     if os.environ.get("STEADY_SIMULATION", "").strip() == "1":
         if os.environ.get("STEADY_EXTERNAL_BILLER", "").strip() == "1":
@@ -100,9 +106,9 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
 
     def mom_sink(_verdict, text: str) -> bool:
         """Free-form only inside an open session. Otherwise it waits, undelivered."""
-        if not twilio.session_open(settings.mom_whatsapp_to):
+        if not twilio.session_open(settings.recipient):
             return False
-        twilio.send_reply(settings.mom_whatsapp_to, text)
+        twilio.send_reply(settings.recipient, text)
         return True
 
     audit = getattr(agent, "_audit", None) if agent is not None else None
@@ -118,7 +124,7 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
             from .autonomy.memory import Memory
             from .config import REPO_ROOT
             autonomy = Controller(Memory(os.environ.get("STEADY_GOAL_DB", str(REPO_ROOT / "data/goals.sqlite"))),
-                                  llm, nessie, twilio, settings.mom_whatsapp_to,
+                                  llm, nessie, twilio, settings.recipient,
                                   customer=settings.customer_first_name, payments=payments,
                                   lock=simulation.lock if simulation else None,
                                   source="local simulation" if simulation else "Nessie sandbox")
@@ -202,6 +208,10 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
             log.error("reply failed for %s: %s code=%s", sid, type(exc).__name__,
                       getattr(exc, "code", None))
 
+    if settings.channel == "slack":
+        from .slack_routes import register_slack
+        register_slack(app, settings, twilio, executor, reply_to, simulation)
+
     @app.get("/healthz")
     def healthz() -> Response:
         return Response("ok", mimetype="text/plain")
@@ -224,7 +234,7 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
         body = request.form.get("Body", "")
         sid = request.form.get("MessageSid", "")
 
-        if from_ != settings.mom_whatsapp_to and (payments is not None or autonomy is not None or not settings.allow_any_sender):
+        if from_ != settings.recipient and (payments is not None or autonomy is not None or not settings.allow_any_sender):
             log.info("ignored message from %s", _mask(from_))
             return _empty_twiml()
         if (payments is not None or autonomy is not None) and (not sid or len(sid)>128):
@@ -319,7 +329,7 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
     @app.get("/watch/session")
     @_local_only
     def watch_session():
-        return jsonify({"open": twilio.session_open(settings.mom_whatsapp_to)})
+        return jsonify({"open": twilio.session_open(settings.recipient)})
 
     @app.get("/goals")
     @_local_only
@@ -360,9 +370,9 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
     def audit_idle():
         log_ = app.extensions.get("audit")
         text = log_.offer_if_idle() if log_ is not None else None
-        if text and twilio.session_open(settings.mom_whatsapp_to):
+        if text and twilio.session_open(settings.recipient):
             try:
-                twilio.send_reply(settings.mom_whatsapp_to, text)
+                twilio.send_reply(settings.recipient, text)
             except SessionClosed:
                 log.info("summary offer waiting: WhatsApp session closed")
         return jsonify({"offered": bool(text), "text": text})
@@ -398,11 +408,11 @@ def main() -> None:
     worker = None
     idle = None
     goal_worker = None
-    messenger = TwilioWhatsApp(settings)
+    messenger = app.extensions["simulation"].twilio if settings.channel == "slack" else TwilioWhatsApp(settings)
 
     def send_offer(text: str) -> None:
         try:
-            messenger.send_reply(settings.mom_whatsapp_to, text)
+            messenger.send_reply(settings.recipient, text)
         except SessionClosed:
             log.info("summary offer waiting: WhatsApp session closed")
 
@@ -418,7 +428,7 @@ def main() -> None:
                 return
             for item in ledger.pending_followups():
                 try:
-                    messenger.send_reply(settings.mom_whatsapp_to, item["message"])
+                    messenger.send_reply(settings.recipient, item["message"])
                 except SessionClosed:
                     log.info("followup waiting: WhatsApp session closed")
                     return

@@ -706,7 +706,8 @@ class PaymentService:
             self._audit(state,"caregiver_email_failed_"+type(exc).__name__,job)
             if job["caregiver_email_attempts"] >= MAX_EMAIL_ATTEMPTS:
                 item["status"], item["token"] = "failed", None
-                self._emit(state,f"I couldn't reach {self.caregiver_name} by email, so the {job['payee']} "
+                delivery = getattr(self.mailer, "delivery_name", "email")
+                self._emit(state,f"I couldn't reach {self.caregiver_name} by {delivery}, so the {job['payee']} "
                            "payment is on hold. Nothing has been paid.",job)
             return
         item["status"], item["token"] = "sent", None

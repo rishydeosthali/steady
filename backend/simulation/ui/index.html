@@ -12,7 +12,7 @@
       <a class="wordmark" href="/">steady</a>
       <p class="studio-label">SCENARIO STUDIO</p>
       <nav aria-label="Studio views"><button data-tab="scenarios" class="nav-item active"><span>Scenarios</span></button><button data-tab="account" class="nav-item"><span>Account & bills</span></button><button data-tab="activity" class="nav-item"><span>Activity</span></button></nav>
-      <div class="sidebar-bottom"><span class="status-dot"></span><span>Simulation workspace</span><p>Money stays simulated.<br>WhatsApp messages are real.</p></div>
+      <div class="sidebar-bottom"><span class="status-dot"></span><span>Simulation workspace</span><p>Money stays simulated.<br>Messages are real.</p></div>
     </aside>
     <main>
       <header class="topbar"><span>WORKSPACE / <b>Scenario studio</b></span><span class="badge">SIMULATION</span></header>
@@ -22,7 +22,7 @@
       <p id="success" class="notice success" role="status" hidden></p>
       <div id="workspace" hidden>
         <div class="page-heading"><div><div class="eyebrow">SCENARIO STUDIO</div><h1>Simulation</h1><p>Add a scenario and review how Steady adjusts the plan.</p></div><div class="clock"><small>SIMULATED DATE · PAUSED</small><strong id="today">—</strong><button id="advance" class="secondary">Advance 1 day →</button></div></div>
-        <section class="metrics" aria-label="Account overview"><article><span>Available balance</span><strong id="balance">—</strong><small>After posted expenses and paid bills</small></article><article><span>Upcoming bills</span><strong id="upcoming">—</strong><small id="bills-count">—</small></article><article><span>Protected cushion</span><strong id="buffer">$200.00</strong><small>Checked before any payment</small></article><article class="session-metric"><span>WhatsApp connection</span><strong id="session-label">Checking…</strong><small id="session-note">—</small></article></section>
+        <section class="metrics" aria-label="Account overview"><article><span>Available balance</span><strong id="balance">—</strong><small>After posted expenses and paid bills</small></article><article><span>Upcoming bills</span><strong id="upcoming">—</strong><small id="bills-count">—</small></article><article><span>Protected cushion</span><strong id="buffer">$200.00</strong><small>Checked before any payment</small></article><article class="session-metric"><span>Messaging connection</span><strong id="session-label">Checking…</strong><small id="session-note">—</small></article></section>
         <section id="view-scenarios" data-view="scenarios">
           <div class="studio-grid">
             <div class="scenario-column">
@@ -34,13 +34,13 @@
               </section>
               <section class="panel presets-panel"><div class="section-head"><div><div class="eyebrow">PRESETS</div><h2>Quick scenarios</h2></div><span class="subtle">Adds to this run</span></div><div id="presets" class="preset-list"></div></section>
             </div>
-            <section class="panel response-panel"><div class="section-title"><span class="step">02</span><div><h2>Agent responses</h2><p>Messages and decisions from this simulation.</p></div></div><div class="conversation-header"><span class="avatar">S</span><div><b>Steady</b><small id="conversation-note">Your WhatsApp agent</small></div><span class="live-pill">WHATSAPP</span></div><div id="messages" class="message-list" aria-live="polite"></div><div class="response-footer"><span>↗</span><p>Reply on your phone to make decisions.<br>Payments still need senior and caregiver approval.</p></div><div class="response-actions"><button id="check" class="secondary">Check now</button><button id="replan" class="text-button">Request fresh proposals →</button></div><p id="worker-status" class="worker-status">—</p></section>
+            <section class="panel response-panel"><div class="section-title"><span class="step">02</span><div><h2>Agent responses</h2><p>Messages and decisions from this simulation.</p></div></div><div class="conversation-header"><span class="avatar">S</span><div><b>Steady</b><small id="conversation-note">Your messaging agent</small></div><span class="live-pill" id="channel-label">MESSAGES</span></div><div id="messages" class="message-list" aria-live="polite"></div><div class="response-footer"><span>↗</span><p>Reply to Steady to make decisions.<br>Payments still need senior and caregiver approval.</p></div><div class="response-actions"><button id="check" class="secondary">Check now</button><button id="replan" class="text-button">Request fresh proposals →</button></div><p id="worker-status" class="worker-status">—</p></section>
           </div>
           <section class="run-tools"><div><h3>Saved scenarios</h3><p>Save this account as a scenario, or start a fresh run.</p></div><div class="button-row"><button id="save-open" class="secondary">Save scenario</button><select id="saved" aria-label="Saved scenario"><option value="">Saved scenarios</option></select><button id="load" class="secondary">Load</button><button id="reset-open" class="text-button">Reset run ↻</button></div></section>
         </section>
         <section id="view-account" data-view="account" hidden><div class="panel"><div class="section-head"><div><div class="eyebrow">THE SHARED ACCOUNT</div><h2>Bills & payment plans</h2></div><span class="subtle">Simulated money only</span></div><div class="table-wrap"><table><thead><tr><th>Payee</th><th>Amount</th><th>Due date</th><th>Payment date</th><th>Status</th></tr></thead><tbody id="bills"></tbody></table></div></div><div class="account-grid"><section class="panel"><h2>Income</h2><div id="deposits" class="records"></div></section><section class="panel"><h2>Recent spending</h2><div id="purchases" class="records"></div></section></div><section class="panel receipts-panel"><h2>Simulated receipts</h2><p class="subtle">Recorded by the local simulated biller. No real funds move.</p><div id="receipts" class="records"></div></section></section>
         <section id="view-activity" data-view="activity" hidden><div class="panel"><div class="eyebrow">ACTIVITY</div><h2>Activity log</h2><ol id="timeline" class="timeline"></ol></div></section>
-        <footer>STEADY SCENARIO STUDIO <span>Simulated bank & local biller · Real WhatsApp messages · No live Nessie writes</span></footer>
+        <footer>STEADY SCENARIO STUDIO <span>Simulated bank & local biller · Real messages · No live Nessie writes</span></footer>
       </div>
     </main>
   </div>
