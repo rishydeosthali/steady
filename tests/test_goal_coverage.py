@@ -32,3 +32,19 @@ def test_step_limit_still_reports_budget(tmp_path, settings):
     controller.run()
     assert goal["id"] in controller.memory.read()["reports"]
     assert controller.memory.read()["outbox"]
+
+
+def test_exact_referenced_payment_decision_does_not_depend_on_model(tmp_path, settings):
+    from types import SimpleNamespace
+    from backend.agent.loop import Agent
+    from tests.conftest import FakeNessie
+    class UnavailableModel:
+        def json_completion(self, *args):
+            raise AssertionError("An exact payment command must not need a model")
+    calls = []
+    payments = SimpleNamespace(handle=lambda *args: calls.append(args) or ["Cancelled"])
+    agent = Agent(UnavailableModel(), FakeNessie(), "Margaret", payments=payments)
+    assert agent.respond("NO 8FF09A1E", message_id="slack:EvCancel") == ["Cancelled"]
+    assert calls == [("NO 8FF09A1E", "no", "slack:EvCancel")]
+    agent.respond("YES 8FF09A1E", message_id="slack:EvYes")
+    assert calls[-1][1] == "yes"

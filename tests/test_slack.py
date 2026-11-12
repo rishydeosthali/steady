@@ -106,3 +106,56 @@ def test_slack_settings_without_twilio(monkeypatch,tmp_path):
     monkeypatch.setenv("SLACK_CAREGIVER_USER_ID","Usenior")
     with pytest.raises(ConfigError,match="different Slack member"):
         load_settings()
+
+
+def test_signed_slack_approvals_settle_once_and_complete_bill_goal(tmp_path, slack_settings):
+    from backend.simulation.runtime import SimulationRuntime
+    from backend.autonomy.controller import Controller
+    from backend.autonomy.memory import Memory
+    from tests.test_autonomy import Reasoner
+
+    messenger = SlackMessenger(slack_settings)
+    sent = []
+    def api(method, payload):
+        if method == "conversations.open":
+            return {"channel": {"id": "D" + payload["users"]}}
+        sent.append(payload)
+        return {"ts": str(len(sent)) + ".0"}
+    messenger.api = api
+    runtime = SimulationRuntime(slack_settings, messenger, tmp_path,
+                                mailer=SlackCaregiver(messenger), today="2026-11-12")
+    runtime.tick()
+    initial = next(iter(runtime.payments.state()["jobs"].values()))
+    def reply_to(user, event_id, text):
+        for message in runtime.payments.handle(text, "yes", event_id) or []:
+            messenger.send_reply(user, message)
+        runtime.tick()
+    app = Flask(__name__)
+    register_slack(app, slack_settings, messenger, InlineExecutor(), reply_to, runtime)
+    client = app.test_client()
+    event = {"type": "event_callback", "team_id": "Tdemo", "event_id": "EvConsent",
+             "event": {"type": "message", "channel_type": "im", "user": "Usenior",
+                       "text": "YES " + initial["id"]}}
+    assert signed(client, "/slack/events", event).status_code == 200
+    assert runtime.payments.state()["jobs"][initial["id"]]["status"] == "awaiting_caregiver"
+    assert runtime.store.state()["receipts"] == {}
+    approval = next(payload for payload in sent if "blocks" in payload)
+    token = approval["blocks"][1]["elements"][0]["value"]
+    decision = {"type": "block_actions", "team": {"id": "Tdemo"}, "user": {"id": "Usenior"},
+                "actions": [{"action_id": "steady_approve", "value": token}]}
+    assert signed(client, "/slack/actions", decision, form=True).status_code == 403
+    decision["user"]["id"] = "Ucaregiver"
+    assert signed(client, "/slack/actions", decision, form=True).status_code == 200
+    assert runtime.payments.state()["jobs"][initial["id"]]["status"] == "paid"
+    assert len(runtime.store.state()["receipts"]) == 1
+    assert signed(client, "/slack/actions", decision, form=True).status_code == 200
+    assert signed(client, "/slack/events", event).status_code == 200
+    assert len(runtime.store.state()["receipts"]) == 1
+    controller = Controller(Memory(tmp_path / "goals.sqlite"), Reasoner(), runtime.bank,
+                            messenger, slack_settings.recipient, payments=runtime.payments, lock=runtime.lock)
+    controller.observe()
+    bill_goal = controller.memory.read()["goals"]["bill:" + initial["invoice_id"]]
+    assert bill_goal["status"] == "complete" and bill_goal["receipt"]["id"]
+    caregiver_message = next(payload for payload in sent if "blocks" in payload)
+    assert "balance" not in caregiver_message["text"].lower()
+    runtime.stop()

@@ -18,6 +18,45 @@
   grounded forecast, then inspected bills and waited after an ineligible action.
   Messaging was faked for that diagnostic; this is separate from live Slack proof.
 
+### Live Slack verification after PR #8
+
+Render deployed `ed9b185` successfully on November 12, 2026. Goal `8EEF5D95`
+was confirmed through the signed Slack DM integration. After confirmation, no
+further calculation requests were sent during the following scenario changes:
+
+| Change | Independently observed agent behavior |
+| --- | --- |
+| Initial $300 savings goal | Reported projected capacity of $3,003 above the $200 cushion, conditional on pending income. |
+| Post a fictional $1,900 dentist expense | Held the unsafe Austin Energy proposal and created a fresh proposal for November 14 after income. |
+| Delay that income seven days | Held the newly unsafe proposal; reported capacity of $1,103 and a $270.85 cushion shortfall. |
+| Mark the fictional $1,874 income received | Issued a new bill proposal for today and updated the savings report with no cushion warning or pending-income assumption. |
+| Advance the simulated day | Sent a new $1,117.29 forecast without a user calculation request; the target stayed $300 and the deadline stayed December 25. |
+
+The live test demonstrates independent observation, forecast revision, unsafe
+payment holds, and fresh proposals after recovery. It does not demonstrate a
+live payment settlement: no caregiver decision was supplied in this rehearsal.
+An additional signed-Slack integration test exercises the real simulated payment
+ledger with fake Slack delivery: the senior cannot self-approve, caregiver
+approval settles once, duplicates produce no second receipt, and the verified
+receipt completes the bill goal. No real funds move.
+
+The agent is autonomous within these boundaries: it monitors and replans savings
+capacity, but has no savings-transfer tool and cannot verify actual saved money.
+It plans bills independently but waits for both approvals before execution.
+Free Render still loses local memory across redeploys; this rehearsal proves
+behavior while running, not continuous uptime or durable hosting.
+
+### Cancellation routing failure
+
+The live `NO 8FF09A1E` test returned a generic no-charge reply and left the real
+proposal awaiting the user. Exact payment commands were still dependent on the
+model's speaker/intent labels. The follow-up routes only complete, unambiguous
+YES/NO/cancel commands (optionally with an eight-character reference) directly
+to the existing deterministic payment handler after the signed sender boundary.
+The service continues enforcing references, readback delivery, expiry, duplicate
+IDs and separate caregiver approval. Mixed or forwarded text keeps the screened
+model path. A regression verifies these exact commands work even without a model.
+
 ## Before changes (November 12, 2026)
 
 - WhatsApp: asking to resume the previously discussed goal and recall its target
