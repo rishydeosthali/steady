@@ -143,6 +143,7 @@ class Controller:
                 return [f"I have your target as {money(values['target'])}. By what date would you like to reach it?"]
             if phrase.casefold() not in text.casefold():
                 raise ValueError("Unsubstantiated deadline")
+            phrase = re.sub(r"^(?:by|on)\s+", "", phrase.strip(), flags=re.I)
             today = date.fromisoformat(self.today())
             if phrase.casefold() == "christmas":
                 deadline = date(today.year, 12, 25)
