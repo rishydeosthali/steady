@@ -22,6 +22,14 @@ settings as described in `EXTERNAL_BILLER.md`. Start `python -m biller_simulator
 and `python -m backend.app`. No credentials are generated or changed by this
 feature. The standalone `scripts.autopay_demo` is unchanged.
 
+The hosted `python -m backend.hosted` entry point also starts and stops the goal
+worker when enabled. The Render blueprint enables `STEADY_AUTONOMY=1`; existing
+services must update that setting separately. In simulation mode the default
+goal database is `STEADY_SIMULATION_DIR/goals.sqlite`, alongside the account and
+payment databases. Set `STEADY_GOAL_DB` only to override that path. A free Render
+instance can sleep and its filesystem is ephemeral; continuous monitoring and
+restart durability require an always-on instance with persistent storage.
+
 Send from the configured senior's WhatsApp:
 
 > Save $300 by December 25, 2026, keep a $200 cushion, and allow $100 weekly for essentials.
@@ -30,6 +38,12 @@ Use a future date within one year. Essentials means living costs outside listed
 bills, such as groceries and transport. Christmas is also recognized. Steady
 extracts values, checks they occur in the user's text, validates them in code,
 and reads back the complete proposal with an eight-character reference.
+
+Goals can be supplied over several messages: "My goal is to buy a car", then
+"around 22 k", then a deadline and weekly essentials. Incomplete intake survives
+restart and Steady asks for the next missing field. A short numeric/date answer
+continues that intake; payment decisions still use the separate payment path.
+Asking about an unconfirmed proposal repeats its target and confirmation code.
 
 Reply `CONFIRM GOAL <reference>` to activate. A bare YES never changes a goal.
 The confirmation replaces the previous budget only after explicit agreement;

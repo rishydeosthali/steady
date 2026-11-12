@@ -21,7 +21,7 @@ services:
       - key: STEADY_EXTERNAL_BILLER
         value: "0"
       - key: STEADY_AUTONOMY
-        value: "0"
+        value: "1"
       - key: STEADY_SIMULATION_DIR
         value: /var/data/steady
       - key: TWILIO_ACCOUNT_SID
