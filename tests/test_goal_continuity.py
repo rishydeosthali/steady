@@ -53,6 +53,19 @@ def test_unsubstantiated_followup_cannot_invent_a_target(tmp_path, settings):
     assert not controller.memory.read()["goals"]
 
 
+def test_sentence_punctuation_is_not_rejected_as_part_of_money(tmp_path, settings):
+    controller = make(tmp_path, settings, Reasoner(goal=extraction(target="$300")))
+    result = controller.handle("My goal is to save $300.", "period")[0]
+    assert "$300.00" in result and "what date" in result
+
+
+def test_amount_cannot_be_extracted_from_part_of_a_decimal(tmp_path, settings):
+    controller = make(tmp_path, settings, Reasoner(goal=extraction(target="$300")))
+    result = controller.handle("My goal is to save $300.50", "decimal")[0]
+    assert "what date" not in result
+    assert not controller.memory.read()["drafts"]
+
+
 def test_hosted_starts_and_stops_goal_worker(monkeypatch, settings):
     from backend import app, hosted, config
     from backend.agent import audit

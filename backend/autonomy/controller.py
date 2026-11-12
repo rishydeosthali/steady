@@ -130,7 +130,7 @@ class Controller:
             for name in ("target", "buffer", "weekly_essentials"):
                 token = raw.get(name) or ""
                 if token and (not isinstance(token, str) or not re.search(
-                        r"(?<![\w.,])" + re.escape(token) + r"(?![\w.,])", text, re.I)):
+                        r"(?<![\w.,])" + re.escape(token) + r"(?!\w|[.,]\d)", text, re.I)):
                     raise ValueError("Unsubstantiated goal value")
                 cleaned = re.sub(r"\s*(dollars?|bucks)\s*$", "", token, flags=re.I).strip().lstrip("$").replace(",", "")
                 if re.fullmatch(r"\d+(?:\.\d+)?\s*[kK]", cleaned):

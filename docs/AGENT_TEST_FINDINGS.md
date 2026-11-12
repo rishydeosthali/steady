@@ -26,3 +26,14 @@ simulation goal database placement, and notification ordering after send failure
 
 Local validation: `python -m pytest -q` passed all 434 tests. Synthetic fixture
 validation passed for four fictional profiles and fifteen scenarios.
+
+## Live retest
+
+- Commit `3700323` deployed successfully, and `STEADY_AUTONOMY` was enabled.
+- A partial fictional goal ending in "$300." reached goal intake instead of
+  repeating the alert, but returned the generic validation fallback. A regression
+  test reproduced the pre-existing punctuation boundary bug. The follow-up patch
+  allows sentence punctuation while still rejecting partial decimal matches.
+- Free-plan redeployments restarted the fictional account and generated new bill
+  proposals. This reinforces the need for persistent storage before relying on
+  durable unattended monitoring.
