@@ -4,7 +4,10 @@ Steady now has a bounded, model-directed controller around its existing tools.
 It chooses its next action from facts and tool results rather than running one
 fixed sequence. Python owns all arithmetic, permissions, payment state changes,
 and receipt verification. This uses the existing Nessie sandbox and independent
-simulated biller; it does not add real banking or transfer money into savings.
+simulated biller; it does not add real banking. In local simulation, confirmed
+named policies can now transfer fictional checking money into savings pots;
+see `SIMULATED_BUDGETING.md`. The original dated budget remains a forecast,
+separate from those recorded simulated allocations.
 
 ## Enable and run
 

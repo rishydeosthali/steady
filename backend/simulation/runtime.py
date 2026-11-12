@@ -18,9 +18,13 @@ from ..payments.money import cents, money
 from ..watch.ledger import Ledger
 from ..watch.run import Watcher, nessie_puller
 from .store import Store, SimulatedBank, SimulatedBiller, dollars, iso, label, positive, seed
+from .budget_actions import BudgetActions, CATEGORIES
 
 log = logging.getLogger(__name__)
 PRESETS = [
+    {"id":"busy_week", "name":"A busy spending week", "description":"Post groceries, transport, dining and vacation expenses together."},
+    {"id":"vacation", "name":"Vacation spending grows", "description":"Post a $350 vacation expense and review the monthly cap."},
+    {"id":"payday", "name":"A new payday", "description":"Receive $2,500 fictional income; the confirmed budget policy can allocate it."},
     {"id":"shortfall", "name":"Unexpected dentist visit", "description":"Post a $1,900 expense and check the bills."},
     {"id":"duplicate", "name":"Charged twice", "description":"Post another $120 dentist charge."},
     {"id":"subscription", "name":"A subscription returns", "description":"Post another $14.99 StreamBox charge."},
@@ -126,6 +130,7 @@ class SimulationRuntime:
         self.payments = SimulationPayments(self.directory / "payments.sqlite3", self.biller, self.bank,
             twilio, settings.recipient, runtime=self, mailer=mailer,
             customer_name=settings.customer_first_name, audit=self.audit)
+        self.budget = BudgetActions(self)
         self.watcher = Watcher(Ledger(self.directory / "watch.sqlite3"), self.pull,
                                today=lambda: date.fromisoformat(self.store.state()["today"]))
         self.watcher.simulation_only = True
@@ -228,6 +233,7 @@ class SimulationRuntime:
                     "invoices":account["invoices"], "deposits":account["deposits"],
                     "purchases":account["purchases"][-30:], "receipts":list(account["receipts"].values()),
                     "jobs":jobs, "messages":messages[-50:], "alerts":alerts[-50:],
+                    "budget":self.budget.snapshot(), "savings_pots":account.get("savings_pots", {}),
                     "events":account["events"][-50:], "audit":self.audit.events()[-60:],
                     "session_open":self.twilio.session_open(self.settings.recipient),
                     "last_error":self.last_error, "last_check":self.last_check,
@@ -259,6 +265,7 @@ class SimulationRuntime:
                 fresh = json.loads(row[0])
                 run = uuid.uuid4().hex
                 fresh.update(run_id=run, account_id=run+"-account", receipts={}, applied={}, events=[])
+                fresh.update(budget_policy=None, budget_draft=None, budget_inbound={}, savings_allocations=[])
                 for collection, key in (("invoices","id"),("history","_id"),("deposits","_id"),("purchases","_id")):
                     for item in fresh[collection]:
                         item[key] = run + "-" + uuid.uuid4().hex[:12]
@@ -310,6 +317,9 @@ class SimulationRuntime:
             # The action and retry marker commit together for cash mutations.
             if operation == "expense":
                 merchant, amount = label(body.get("merchant")), positive(body.get("amount"))
+                category = body.get("category", "other")
+                if category not in CATEGORIES:
+                    raise ValueError("Choose a supported expense category")
                 when = iso(body.get("date", account["today"]))
                 if when > account["today"]:
                     raise ValueError("A posted expense cannot be in the future")
@@ -319,8 +329,41 @@ class SimulationRuntime:
                         raise ValueError("The expense exceeds the simulated cash balance")
                     state["balance_cents"] -= amount
                     state["purchases"].append({"_id":uuid.uuid4().hex, "merchant_id":merchant,
-                        "description":merchant, "amount":dollars(amount), "purchase_date":when, "status":"completed"})
+                        "description":merchant, "amount":dollars(amount), "purchase_date":when, "status":"completed", "category":category})
                     self.store.event(state, f"Posted {money(amount)} at {merchant}.")
+                    state["applied"][key] = fingerprint
+            elif operation == "expense-batch":
+                rows = body.get("expenses")
+                if not isinstance(rows, list) or not 1 <= len(rows) <= 25:
+                    raise ValueError("Send between one and 25 expenses")
+                normalized = []
+                for row in rows:
+                    if not isinstance(row, dict) or row.get("category", "other") not in CATEGORIES:
+                        raise ValueError("Choose supported expense categories")
+                    merchant, value = label(row.get("merchant")), positive(row.get("amount"))
+                    when = iso(row.get("date", account["today"]))
+                    if when > account["today"]:
+                        raise ValueError("A posted expense cannot be in the future")
+                    normalized.append(dict(_id=uuid.uuid4().hex, merchant_id=merchant, description=merchant,
+                        amount=dollars(value), purchase_date=when, status="completed", category=row.get("category", "other")))
+                total = sum(cents(row["amount"]) for row in normalized)
+                if total > self.state()["balance_cents"]:
+                    raise ValueError("The expenses exceed simulated checking cash")
+                with self.store.tx() as state:
+                    state["balance_cents"] -= total
+                    state["purchases"].extend(normalized)
+                    self.store.event(state, f"Posted {len(normalized)} fictional expenses totaling {money(total)}.")
+                    state["applied"][key] = fingerprint
+            elif operation == "income":
+                amount, description = positive(body.get("amount")), label(body.get("description", "Demo income"))
+                when = iso(body.get("date", account["today"]))
+                with self.store.tx() as state:
+                    completed = when <= state["today"]
+                    state["deposits"].append(dict(_id=uuid.uuid4().hex, amount=dollars(amount),
+                        description=description, transaction_date=when, status="completed" if completed else "pending"))
+                    if completed:
+                        state["balance_cents"] += amount
+                    self.store.event(state, f"Added {money(amount)} fictional income: {description}.")
                     state["applied"][key] = fingerprint
             elif operation == "bill":
                 payee, amount = label(body.get("payee")), positive(body.get("amount"))

@@ -63,6 +63,7 @@ function render(next) {
   $("worker-status").textContent=state.last_error?"Last check needs attention: "+state.last_error:
     state.last_check?"Last checked "+new Date(state.last_check).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})+" · Background checks every 10 seconds":"Ready · background checks run on the hosted server";
   if(!previous || previous.run_id!==state.run_id || $("expense-date").value===previous.today)$("expense-date").value=state.today;
+  if(!$("income-date").value || $("income-date").value===previous?.today)$("income-date").value=state.today;
   $("expense-date").max=state.today;
   if(!$("bill-date").value || previous?.run_id!==state.run_id)$("bill-date").value=unpaid[0]?.due_date||state.today;
   $("bill-date").min=state.today;
@@ -76,7 +77,7 @@ function render(next) {
   $("saved").replaceChildren(el("option","Saved scenarios"));$("saved").firstChild.value="";
   for(const s of state.saved){const n=el("option",s.name);n.value=s.id;$("saved").append(n);}
   $("saved").value=savedId;
-  renderPresets();renderMessages();renderAccount();renderActivity();
+  renderPresets();renderMessages();renderAccount();renderActivity();renderBudget();
 }
 function renderPresets(){
   $("presets").replaceChildren();
@@ -86,6 +87,11 @@ function renderPresets(){
   }
 }
 function preset(id){
+  if(id==="payday")return act("income",{description:"Demo payday",amount:"2500.00",date:state.today});
+  if(id==="vacation")return act("expense",{merchant:"Vacation booking",amount:"350.00",date:state.today,category:"vacation"});
+  if(id==="busy_week")return act("expense-batch",{expenses:[
+    {merchant:"Groceries",amount:"80",category:"groceries"},{merchant:"Bus pass",amount:"30",category:"transport"},
+    {merchant:"Restaurant",amount:"55",category:"dining"},{merchant:"Vacation deposit",amount:"120",category:"vacation"}]});
   if(id==="shortfall")return act("expense",{merchant:"Dentist",amount:"1900.00",date:state.today});
   if(id==="duplicate")return act("expense",{merchant:"Dentist",amount:"120.00",date:state.today});
   if(id==="subscription")return act("expense",{merchant:"StreamBox",amount:"14.99",date:state.today});
@@ -98,8 +104,9 @@ function preset(id){
 }
 function renderMessages(){
   const list=$("messages"), nearBottom=list.scrollHeight-list.scrollTop-list.clientHeight<60;
-  const all=[...state.messages.map(m=>({...m,status:m.status==="sent"?"Sent to Twilio":m.status==="failed"?"Send failed":m.status==="superseded"?"Replaced by a newer plan":"Waiting to send"})),
-    ...state.alerts.filter(a=>a.text&&!a.resolved).map(a=>({text:a.text,status:a.delivered?"Sent to Twilio":"Waiting to send"}))];
+  const delivered=state.channel==="slack"?"Sent to Slack":"Sent to WhatsApp";
+  const all=[...state.messages.map(m=>({...m,status:m.status==="sent"?delivered:m.status==="failed"?"Send failed":m.status==="superseded"?"Replaced by a newer plan":"Waiting to send"})),
+    ...state.alerts.filter(a=>a.text&&!a.resolved).map(a=>({text:a.text,status:a.delivered?delivered:"Waiting to send"}))];
   const seen=new Set();list.replaceChildren();
   for(const m of all){if(seen.has(m.text)||m.status==="Replaced by a newer plan")continue;seen.add(m.text);
     const card=el("article",null,"message"+(m.status==="Waiting to send"?" waiting":""));card.append(el("small",m.status),el("p",m.text));list.append(card);
@@ -129,10 +136,26 @@ function renderActivity(){
   for(const r of rows.reverse()){const li=el("li");li.append(el("small",r.date),el("p",r.text));$("timeline").append(li);}
   if(!rows.length)$("timeline").append(el("li","Changes and decisions will appear here."));
 }
+function renderBudget(){
+  const budget=state.budget||{goals:[],caps:[],allocations:[]};
+  $("budget-status").textContent=budget.plan_id?"Plan "+budget.plan_id+" · "+(budget.active?"Active":"Paused"):"No allocation plan yet. Confirm one with Steady to authorize fictional transfers.";
+  $("savings-goals").replaceChildren();$("spending-caps").replaceChildren();$("savings-transfers").replaceChildren();
+  for(const goal of budget.goals){const row=el("article",null,"record");
+    row.append(el("strong",goal.id),el("p",money(goal.saved_cents)+" saved in simulation / "+money(goal.target_cents)+" target"),
+      el("p",(goal.basis_points/100)+"% of new received income · "+money(goal.remaining_cents)+" remaining"));
+    const progress=document.createElement("progress");progress.max=goal.target_cents;progress.value=Math.min(goal.saved_cents,goal.target_cents);progress.setAttribute("aria-label",goal.id+" savings progress");row.append(progress);$("savings-goals").append(row);}
+  for(const cap of budget.caps){const row=el("article",null,"record");row.append(el("strong",cap.category),
+    el("p",money(cap.spent_cents)+" spent / "+money(cap.limit_cents)+" monthly cap"),
+    el("p",cap.over_cents?money(cap.over_cents)+" over cap. Pause new spending here.":money(cap.remaining_cents)+" available this month."));$("spending-caps").append(row);}
+  for(const transfer of [...budget.allocations].reverse()){const row=el("article",null,"record");row.append(el("strong",money(transfer.amount_cents)+" → "+transfer.goal_id),el("p",date(transfer.date)+" · simulated checking transfer"));$("savings-transfers").append(row);}
+  if(!budget.goals.length)$("savings-goals").append(el("p","Your confirmed named goals will appear here."));
+  if(!budget.allocations.length)$("savings-transfers").append(el("p","No simulated transfers recorded yet."));
+}
 document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{document.querySelectorAll("[data-tab]").forEach(n=>n.classList.toggle("active",n===b));document.querySelectorAll("[data-view]").forEach(n=>n.hidden=n.dataset.view!==b.dataset.tab);});
 document.querySelectorAll("[data-form]").forEach(b=>b.onclick=()=>{document.querySelectorAll("[data-form]").forEach(n=>n.classList.toggle("selected",n===b));document.querySelectorAll(".change-form").forEach(n=>n.hidden=n.id!==b.dataset.form+"-form");});
 $("expense-form").onsubmit=e=>{e.preventDefault();act("expense",Object.fromEntries(new FormData(e.target)));};
 $("bill-form").onsubmit=e=>{e.preventDefault();act("bill",Object.fromEntries(new FormData(e.target)));};
+$("new-income-form").onsubmit=e=>{e.preventDefault();act("income",Object.fromEntries(new FormData(e.target)));};
 $("income-form").onsubmit=e=>{e.preventDefault();act("delay-income",{deposit_id:$("deposit").value,days:Number($("delay-days").value)});};
 $("settle").onclick=()=>act("settle-income",{deposit_id:$("deposit").value});
 $("advance").onclick=()=>act("advance");$("check").onclick=()=>act("check");$("replan").onclick=()=>act("replan");
