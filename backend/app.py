@@ -117,7 +117,8 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
             from .autonomy.controller import Controller
             from .autonomy.memory import Memory
             from .config import REPO_ROOT
-            autonomy = Controller(Memory(os.environ.get("STEADY_GOAL_DB", str(REPO_ROOT / "data/goals.sqlite"))),
+            goal_path = simulation.directory / "goals.sqlite" if simulation else REPO_ROOT / "data/goals.sqlite"
+            autonomy = Controller(Memory(os.environ.get("STEADY_GOAL_DB", str(goal_path))),
                                   llm, nessie, twilio, settings.mom_whatsapp_to,
                                   customer=settings.customer_first_name, payments=payments,
                                   lock=simulation.lock if simulation else None,
