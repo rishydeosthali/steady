@@ -130,7 +130,7 @@ class Controller:
             for name in ("target", "buffer", "weekly_essentials"):
                 token = raw.get(name) or ""
                 if token and (not isinstance(token, str) or not re.search(
-                        r"(?<![\w.,])" + re.escape(token) + r"(?![\w.,])", text, re.I)):
+                        r"(?<![\w.,])" + re.escape(token) + r"(?!\w|[.,]\d)", text, re.I)):
                     raise ValueError("Unsubstantiated goal value")
                 cleaned = re.sub(r"\s*(dollars?|bucks)\s*$", "", token, flags=re.I).strip().lstrip("$").replace(",", "")
                 if re.fullmatch(r"\d+(?:\.\d+)?\s*[kK]", cleaned):
@@ -143,6 +143,7 @@ class Controller:
                 return [f"I have your target as {money(values['target'])}. By what date would you like to reach it?"]
             if phrase.casefold() not in text.casefold():
                 raise ValueError("Unsubstantiated deadline")
+            phrase = re.sub(r"^(?:by|on)\s+", "", phrase.strip(), flags=re.I)
             today = date.fromisoformat(self.today())
             if phrase.casefold() == "christmas":
                 deadline = date(today.year, 12, 25)

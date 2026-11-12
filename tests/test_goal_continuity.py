@@ -53,6 +53,30 @@ def test_unsubstantiated_followup_cannot_invent_a_target(tmp_path, settings):
     assert not controller.memory.read()["goals"]
 
 
+def test_sentence_punctuation_is_not_rejected_as_part_of_money(tmp_path, settings):
+    controller = make(tmp_path, settings, Reasoner(goal=extraction(target="$300")))
+    result = controller.handle("My goal is to save $300.", "period")[0]
+    assert "$300.00" in result and "what date" in result
+
+
+def test_amount_cannot_be_extracted_from_part_of_a_decimal(tmp_path, settings):
+    controller = make(tmp_path, settings, Reasoner(goal=extraction(target="$300")))
+    result = controller.handle("My goal is to save $300.50", "decimal")[0]
+    assert "what date" not in result
+    assert not controller.memory.read()["drafts"]
+
+
+def test_real_model_date_phrase_with_by_is_normalized_after_grounding(tmp_path, settings):
+    # Observed extraction from the actual model on this fictional message.
+    model = Reasoner(goal=extraction(target="$300", deadline="by December 25, 2026",
+                                    buffer="$200", weekly_essentials="$100"))
+    controller = make(tmp_path, settings, model)
+    response = controller.handle("Fictional sandbox test: my goal is to save $300 by December 25, 2026, "
+                                 "keep a $200 cushion, and allow $100 weekly for essentials.", "full")[0]
+    assert "CONFIRM GOAL" in response
+    assert next(iter(controller.memory.read()["drafts"].values()))["deadline"] == "2026-12-25"
+
+
 def test_hosted_starts_and_stops_goal_worker(monkeypatch, settings):
     from backend import app, hosted, config
     from backend.agent import audit
