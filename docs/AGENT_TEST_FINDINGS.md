@@ -1,5 +1,23 @@
 # Agent continuity verification
 
+## Slack continuation
+
+- Signed Slack DMs successfully created and confirmed fictional savings goal
+  F8FA1560 ($300 by December 25, $200 cushion, $100 weekly essentials).
+- Before the coverage fix, confirmation produced no budget report. A simulated
+  $1,900 expense independently held an unsafe bill and generated a fresh dated
+  proposal, but savings reporting was still missing.
+- The real model reproduced goal starvation: six bill inspection/reconsideration
+  calls exhausted the turn without calculating the budget. Bill reconsideration
+  was being attempted even for invoices not held for funds.
+- The coverage fix supplies eligible invoice IDs, prioritizes unreported budgets,
+  blocks ineligible reconsideration, and guarantees a deterministic budget report
+  after each successful bounded turn. Existing outbox deduplication prevents
+  repeated unchanged reports. No goal values or approvals change automatically.
+- Real-model retest with fictional data selected report_budget first and sent a
+  grounded forecast, then inspected bills and waited after an ineligible action.
+  Messaging was faked for that diagnostic; this is separate from live Slack proof.
+
 ## Before changes (November 12, 2026)
 
 - WhatsApp: asking to resume the previously discussed goal and recall its target

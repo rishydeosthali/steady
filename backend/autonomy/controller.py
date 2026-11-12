@@ -69,6 +69,12 @@ after a changed budget, and inspect a bill before trying to resolve it.
 reason is one short public explanation of the action. Never include account secrets.
 Do not request permission to read or calculate. No message wording comes from you."""
 
+SYSTEM += """\nGive every active goal attention. If an active budget has no report,
+calculate and report it before inspecting routine bills. The context includes
+replannable_invoice_ids: resolve_bill is useful ONLY for those ids. Awaiting
+approval is a reason to wait, not to repeatedly try resolving the same bill.
+After a material financial change, report its impact on the budget before waiting."""
+
 
 class Controller:
     def __init__(self, memory, llm, nessie, twilio, recipient, *, customer="Margaret",
@@ -316,9 +322,12 @@ class Controller:
             state["fingerprint"] = fingerprint
             state["next_check"] = time.time() + 600
         results, used = [], set()
+        replannable = [j["invoice_id"] for j in snapshot["jobs"]
+                       if j["status"] == "held" and j.get("hold_reason") == "funds"]
         for _ in range(self.max_steps):
             state = self.memory.read()
             context = dict(goals=active, facts=snapshot, reports=state["reports"],
+                           replannable_invoice_ids=replannable,
                            recent_decisions=state["events"][-8:], results=results)
             action = self.llm.json_completion(SYSTEM, json.dumps(context), "steady_next_action", ACTION_SCHEMA)
             tool, key = action.get("tool"), action.get("id", "")
@@ -342,6 +351,12 @@ class Controller:
                 break
         else:
             self.memory.event("step_limit")
+        # Goal coverage is an invariant, not a model suggestion. A bounded
+        # reasoning turn must not silently starve savings behind routine bills.
+        # Arithmetic and wording remain deterministic; no goal or money changes.
+        for goal in active:
+            if goal["kind"] == "budget":
+                self._tool("report_budget", goal["id"], {}, snapshot, results)
         with self.memory.transaction() as state:
             state["fingerprint"] = fingerprint
             if state["next_check"] <= time.time():
@@ -377,6 +392,8 @@ class Controller:
         if tool == "resolve_bill":
             if not any(r["tool"] == "inspect_bill" and r["id"] == key for r in results):
                 raise ValueError("Inspect bill first")
+            if not jobs or jobs[-1]["status"] != "held" or jobs[-1].get("hold_reason") != "funds":
+                return {"status": "waiting", "reason": "Only a funds-held bill can be reconsidered; wait for its existing decision."}
             return self.payments.reconsider(key)
         if tool == "report_bill":
             job = jobs[-1] if jobs else None

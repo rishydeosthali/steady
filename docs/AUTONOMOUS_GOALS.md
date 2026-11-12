@@ -85,6 +85,12 @@ The background payment worker continues enforcing previously authorized jobs
 and reconciling their receipts. The goal controller supervises and adapts plans;
 it does not replace the payment state machine.
 
+Every successful bounded turn covers each active savings goal with a deterministic
+forecast and deduplicated report, even when the model spends its steps on bills
+or chooses to wait. The model receives eligible funds-held invoice IDs; awaiting
+approval, cancellation and ordinary unpaid invoices cannot be reconsidered as
+funds-recovery jobs. This prevents routine bill inspection from starving savings.
+
 ## Budget meaning and boundaries
 
 The savings target is an amount intended to remain available **above** the cash
