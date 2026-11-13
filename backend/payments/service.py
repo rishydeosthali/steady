@@ -68,6 +68,8 @@ class PaymentService:
         self.buffer, self.known_payees, self.wakeup = buffer_cents, set(known_payees), wakeup
         self.mailer, self.caregiver_name, self.max_cents = mailer, caregiver_name, max_cents
         self.audit = audit
+        self.buffer_policy = None
+        self.essentials_policy = None
         Path(self.database).parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(self.database) as db:
             db.execute("CREATE TABLE IF NOT EXISTS state (id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL)")
@@ -75,6 +77,63 @@ class PaymentService:
             initial = {"schema_version":1, "demo_date":demo_date.isoformat() if demo_date else None,
                        "jobs":{}, "outbox":[], "audit":[], "wakeups":[]}
             db.execute("INSERT OR IGNORE INTO state VALUES(1,?)", (json.dumps(initial),))
+
+    @property
+    def buffer(self):
+        policy = getattr(self, "buffer_policy", None)
+        return max(self._buffer, policy()) if policy is not None else self._buffer
+
+    @buffer.setter
+    def buffer(self, value):
+        self._buffer = value
+
+    def resolution_snapshot(self):
+        """Fresh provider evidence and payment states, without approval credentials."""
+        invoices = self._invoices()
+        state = self.state()
+        fields = ("id", "invoice_id", "account_id", "amount_cents", "status", "scheduled_for",
+                  "hold_reason", "receipt", "invoice_version")
+        return {"invoices": invoices,
+                "jobs": [{k: j[k] for k in fields if k in j} for j in state["jobs"].values()]}
+
+    def reconsider(self, invoice_id):
+        """Replan only funds holds. New proposal, new key, and two fresh approvals.
+
+        Never revive cancellation, denial, senior holds, or uncertain submissions.
+        """
+        with self._tx() as (_, state):
+            jobs = [j for j in state["jobs"].values() if j["invoice_id"] == invoice_id]
+            old = jobs[-1] if jobs else None
+            if old is None or old["status"] != "held" or old.get("hold_reason") != "funds":
+                return {"status": "waiting", "reason": "No funds-held request is eligible for replanning."}
+            if any(j["status"] in CANCELLABLE | {"reconciling"} for j in state["jobs"].values()):
+                return {"status": "waiting", "reason": "Another approval or payment is pending."}
+            invoices = self._invoices()
+            bill = next((b for b in invoices if b["id"] == invoice_id), None)
+            if not bill or not self._matches(old, bill) or bill["status"] != "unpaid":
+                return {"status": "held", "reason": "Invoice changed; independent review required."}
+            if bill["payee"] not in self.known_payees or bill["amount_cents"] > self.max_cents:
+                return {"status": "held", "reason": "Payee or amount requires review."}
+            bank = self._bank(state)
+            if bank["id"] != old["account_id"]:
+                return {"status": "held", "reason": "Account changed."}
+            when = self._plan(state, bill, invoices, bank)
+            if when is None:
+                return {"status": "held", "reason": "No safe date; wait for new funds or information."}
+            old["status"] = "superseded"
+            ref = uuid.uuid4().hex[:8].upper()
+            while ref in state["jobs"]:
+                ref = uuid.uuid4().hex[:8].upper()
+            job = {k: old[k] for k in ("invoice_id", "customer_ref", "account_id", "payee",
+                                      "amount_cents", "currency", "invoice_version", "due_date")}
+            today = self.today(state)
+            job.update(id=ref, scheduled_for=when, status="awaiting_user", user_approved=False,
+                       caregiver_approved=None, readback_delivered=False, idempotency_key=uuid.uuid4().hex,
+                       expires_on=min(bill["due_date"], (date.fromisoformat(today)+timedelta(days=1)).isoformat()))
+            state["jobs"][ref] = job
+            self._emit(state, self._readback_text(state, job), job, "readback")
+            self._audit(state, "autonomous_replan_requires_fresh_approvals", job)
+            return {"status": "awaiting_user", "reference": ref, "scheduled_for": when}
 
     @contextmanager
     def _tx(self):
@@ -190,6 +249,8 @@ class PaymentService:
 
     def _safe(self, state, target, invoices, bank, proposed):
         today = date.fromisoformat(self.today(state))
+        daily_essentials = self.essentials_policy() if self.essentials_policy is not None else 0
+        protected = self.buffer
         obligations = []
         jobs = {j["invoice_id"]:j for j in state["jobs"].values()}
         for bill in invoices:
@@ -212,6 +273,8 @@ class PaymentService:
             if (bill.get("payee"), amount, when) not in external:
                 obligations.append((when,amount))
         end = max([when for when,_ in obligations] + [proposed,self.today(state)])
+        if daily_essentials:
+            end = max(end, (today + timedelta(days=13)).isoformat())
         horizon = (date.fromisoformat(end)-today).days
         if horizon > 90:
             return False
@@ -222,7 +285,8 @@ class PaymentService:
                 if deposit.get("status") == "pending" and when > self.today(state) and str(deposit.get("transaction_date", ""))[:10] == when:
                     balance += cents(deposit.get("amount"))
             balance -= sum(amount for deadline,amount in obligations if max(deadline,self.today(state)) == when)
-            if balance < self.buffer:
+            balance -= daily_essentials
+            if balance < protected:
                 return False
         return True
 
@@ -290,6 +354,7 @@ class PaymentService:
         bank = self._bank(state)
         if bank["id"] != job["account_id"] or bank["available"]-job["amount_cents"] < self.buffer or not self._safe(state,invoice,invoices,bank,today):
             job["status"] = "held"
+            job["hold_reason"] = "funds"
             self._audit(state,"final_funds_check_failed",job)
             self._emit(state,f"I did not pay {job['payee']} today. Your account no longer has enough to pay "
                        f"it and keep your {money(self.buffer)} cushion. Nothing was sent.",job)
@@ -354,6 +419,8 @@ class PaymentService:
                            "user_approved":False,"readback_delivered":False,"caregiver_approved":None,
                            "expires_on":min(bill["due_date"],(date.fromisoformat(today)+timedelta(days=1)).isoformat()),
                            "idempotency_key":uuid.uuid4().hex}
+                    if not allowed:
+                        job["hold_reason"] = "funds" if known else "payee_review"
                     state["jobs"][ref] = job
                     if allowed:
                         reason = " after your deposit arrives" if self._after_deposit(state,bank,when) else ""
@@ -443,6 +510,7 @@ class PaymentService:
             if job is None or job["status"] not in allowed:
                 return False
             job["status"] = status
+            job["hold_reason"] = "senior_decision"
             self._audit(state, event, job)
             self._emit(state, message(job), job)
             return True
