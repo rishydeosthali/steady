@@ -161,3 +161,40 @@ def test_strategy_and_measured_progress_survive_controller_restart(system):
     restarted.run(force=True)
     assert model.strategy_contexts[-1]["previous_outcome"]["repairs"] == 10000
     assert runtime.store.state()["savings_pots"] == {"education":5000, "repairs":10000}
+
+
+def test_completed_goals_may_be_omitted_and_balanced_mode_redistributes_their_share(system):
+    runtime, controller, model = system
+    activate(runtime, controller, model)
+    change(runtime, "income", amount="1000", description="Income")
+    raw = {**decision(), "allocation_mode":"balanced"}
+    next_strategy = {**raw, "priority_order":["education"]}
+    script(model, [raw, next_strategy])
+    runtime.budget.replan(model)
+    assert runtime.budget.snapshot()["strategy"]["shares"] == {"education":1000, "repairs":500}
+    with runtime.store.tx() as state:
+        state["savings_pots"]["repairs"] = 10000
+    runtime.budget.replan(model)
+    assert runtime.budget.snapshot()["strategy"]["shares"] == {"education":1500, "repairs":0}
+
+
+def test_model_cannot_override_cash_protection_by_choosing_to_continue_saving(system):
+    runtime, controller, model = system
+    activate(runtime, controller, model)
+    with runtime.store.tx() as state:
+        state["balance_cents"] = 0
+    change(runtime, "income", amount="100", description="Small income")
+    script(model, [decision(defer=False)], [action("allocate_savings", "repairs"), action("wait")])
+    controller.run(force=True)
+    assert runtime.store.state()["savings_pots"] == {"education":0, "repairs":0}
+
+
+def test_strategy_queries_report_decision_without_proposing_new_policy(system):
+    runtime, controller, model = system
+    ref = activate(runtime, controller, model)
+    script(model, [decision()])
+    runtime.budget.replan(model)
+    reply = controller.handle("Why is this your financial strategy?", "strategy-query")[0]
+    assert "Priority order: repairs, education" in reply
+    assert runtime.store.state()["budget_draft"] is None
+    assert runtime.store.state()["budget_policy"]["id"] == ref
