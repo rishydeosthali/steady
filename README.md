@@ -264,6 +264,23 @@ through the tunnel (403):
 | `POST /watch/decisions` | `{"payee", "decision", "amount", "payment_date"}`. Appends to the tape |
 | `POST /watch/check` | `{"merchant", "amount"}`. Judges a purchase she is considering |
 
+## Persistent autonomous goals
+
+Set `STEADY_AUTONOMY=1` to enable the goal coordinator in `backend.app`.
+It maintains a confirmed savings/budget goal in private SQLite memory, chooses
+tools with the model, observes their results, and resumes after changes or a
+scheduled check. With `STEADY_EXTERNAL_BILLER=1`, it also tracks each external
+invoice through verified simulated settlement and can replan funds-held bills
+with fresh senior and caregiver approvals.
+
+Text: `Save $300 by December 25, 2026, keep a $200 cushion, and allow $100 weekly
+for essentials.` Steady reads it back and asks for `CONFIRM GOAL <reference>`.
+`How is my budget?`, `PAUSE GOAL <reference>`, and `RESUME GOAL <reference>` work
+in the same signed WhatsApp chat. No savings transfer is performed.
+
+See [autonomous goals](docs/AUTONOMOUS_GOALS.md) for architecture, setup,
+limits, tests, and local inspection routes.
+
 ## Development
 
 Andrew works on `andrew`. Team changes should go through pull requests to `main`
