@@ -469,14 +469,19 @@ class PaymentService:
             return self._readback_text(state, job) if job else None
 
     def claim_readback(self):
-        """The open YES/NO text, after dropping any queued copy so flush cannot send it twice."""
+        """Return the proposal. Sending code must acknowledge successful delivery."""
         with self._tx() as (_, state):
             job = self._open_user_job(state)
             if job is None:
                 return None
-            if self._close_queued_readbacks(state, job["id"]):
-                job["readback_delivered"] = True
             return self._readback_text(state, job)
+
+    def acknowledge_readback(self, text):
+        with self._tx() as (_, state):
+            job = self._open_user_job(state)
+            if job is not None and text == self._readback_text(state, job):
+                job["readback_delivered"] = True
+                self._close_queued_readbacks(state, job["id"], "superseded")
 
     def remind(self):
         """Queue the open YES/NO once. A copy already waiting to send is left alone."""
