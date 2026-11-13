@@ -430,7 +430,11 @@ class Controller:
             if self.actions is None:
                 raise ValueError("Budget actions require local simulation")
             if tool == "allocate_savings":
-                return self.actions.allocate(key.removeprefix("allocation:").casefold())
+                result = self.actions.allocate(key.removeprefix("allocation:").casefold())
+                # A later model failure must not hide a committed transfer.
+                # Further reports in this turn supersede this pending snapshot.
+                self._tool("review_spending", "", {}, snapshot, results)
+                return result
             report = self.actions.review()
             # Progress is sent once for each changed report, not once per poll.
             self.memory.queue("allocation:plan:" + snapshot["today"] + ":" + digest(report), report["text"])

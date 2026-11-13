@@ -100,7 +100,8 @@ class BudgetActions:
         state = self.runtime.store.state()
         policy = state["budget_policy"]
         jobs = self.runtime.payments.state()
-        daily = max((policy["weekly_cents"]+6)//7, self.runtime.payments.essentials_policy())
+        daily = max((policy["weekly_cents"]+6)//7,
+                    self.runtime.payments.essentials_policy() if self.runtime.payments.essentials_policy else 0)
         buffer = max(policy["buffer_cents"], self.runtime.payments.buffer)
         paid = self.runtime.payments._spent_cents(jobs, state["account_id"])
         bills = sum(b["amount_cents"] for b in state["invoices"] if b["status"] == "unpaid")

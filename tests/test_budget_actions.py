@@ -265,3 +265,36 @@ def test_spending_question_uses_cash_reserves_and_rejects_ambiguous_amounts(syst
     result = controller.handle("Can I spend $20 or $50 on vacation?", "preview-many")[0]
     assert "one" in result.lower()
     assert not runtime.store.state().get("savings_allocations")
+
+
+def test_successful_allocation_is_reported_even_if_next_model_call_fails(system):
+    runtime, controller, model = system
+    confirm(runtime, controller)
+    change(runtime, "income", amount="1000", description="Payday")
+    model.actions = [action("allocate_savings", "car")]
+    controller.run()
+    controller.flush()
+    assert runtime.store.state()["savings_pots"]["car"] == 10000
+    assert any("car: $100.00 actually allocated" in text for _, text in runtime.twilio.sent)
+    # Recovery must allocate only the still-unfunded goal, not repeat car.
+    model.actions = [action("allocate_savings", "emergency"), action("wait")]
+    controller.run(force=True)
+    assert runtime.store.state()["savings_pots"] == {"car":10000, "emergency":5000}
+    assert len(runtime.store.state()["savings_allocations"]) == 2
+
+
+def test_partial_allocation_completes_exactly_after_safe_cash_returns(system):
+    runtime, controller, _ = system
+    confirm(runtime, controller)
+    # Known bills + cushion + rounded-up 30-day essentials = $883.94.
+    with runtime.store.tx() as state:
+        state["balance_cents"] = 0
+    change(runtime, "income", amount="900", description="Restricted payday")
+    first = runtime.budget.allocate("car")
+    assert first["allocated_cents"] == 1606
+    assert runtime.budget.allocate("emergency")["allocated_cents"] == 0
+    change(runtime, "income", amount="1000", description="Recovery payday")
+    runtime.budget.allocate("car")
+    runtime.budget.allocate("emergency")
+    assert runtime.store.state()["savings_pots"] == {"car":19000, "emergency":9500}
+    assert runtime.budget.allocate("car")["allocated_cents"] == 0
