@@ -719,6 +719,10 @@ class PaymentService:
                     continue
                 job = state["jobs"].get(item["request_id"])
                 if item["kind"] == "caregiver_email":
+                    # Exhausted email attempts are terminal. Only failed WhatsApp
+                    # deliveries are eligible for the general retry path above.
+                    if item["status"] == "failed":
+                        continue
                     self._send_caregiver_email(state,item,job)
                     continue
                 if item["kind"] == "readback" and job and (job["status"] != "awaiting_user" or self.today(state)>job["expires_on"]):
