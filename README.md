@@ -9,6 +9,17 @@ after explicit confirmation using Capital One's Nessie sandbox.
 See [the project brief](docs/PROJECT_CONTEXT.md) for features, architecture, and
 the HackTX demo, and [AGENTS.md](AGENTS.md) for collaboration and conflict handling.
 
+## Hosted scenario studio
+
+The original WhatsApp app has an opt-in persistent simulation dashboard. Add
+expenses, change bills, delay/settle income, advance the demo date, and save or
+reset scenarios through a website. Agent replies and payment checks share that
+same fictional account. No live banking writes occur; WhatsApp messages are real.
+
+Deploy the included `render.yaml` through Render's website for an always-on
+service with persistent storage and no local Cloudflare tunnel. See the
+[scenario studio guide](docs/SCENARIO_STUDIO.md) for setup and account steps.
+
 ## WhatsApp base agent
 
 Margaret texts Steady's WhatsApp number. Twilio POSTs to the app, the app reads
