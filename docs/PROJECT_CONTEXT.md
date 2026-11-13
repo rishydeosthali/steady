@@ -63,6 +63,12 @@ The shared account SQLite record stores the policy, pot balances and receipts.
 The studio exposes actual simulated progress separately from legacy projected
 savings capacity. This adds no real banking writes; details and rehearsal steps
 are in `docs/SIMULATED_BUDGETING.md`.
+Opt-in adaptive plans add `backend/simulation/strategy.py`: a model selects
+relative goal shares, savings deferral and temporary cap tightening within an
+explicitly confirmed aggregate envelope. The controller reassesses on financial
+changes, stores decisions and measured outcomes, then observes actual allocations.
+The account ledger enforces per-deposit aggregate credits across strategy changes;
+payment approvals, target amounts and protected reserves remain deterministic.
 The application stack and division of implementation roles are still open.
 
 ## Three-minute demo target

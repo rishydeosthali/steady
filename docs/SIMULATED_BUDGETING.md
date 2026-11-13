@@ -36,6 +36,42 @@ expense and makes no transfer.
 
 ## Agent behavior
 
+### Adaptive financial planning
+
+Append **"Adapt priorities automatically"** when proposing a named-goal plan to
+delegate strategy choices. The readback explicitly authorizes a shared savings
+envelope equal to the sum of the stated percentages. Confirmation is required;
+existing fixed plans retain their original rules. For example, education at 10%
+and repairs at 5% can become education at 0% and repairs at 15%, then change back
+when repairs are funded. This works with arbitrary user-provided goal names.
+
+On changed finances or a scheduled follow-up, the controller first asks the model
+to reassess competing goals, obligations, cash headroom, pending deposits and
+spending. The model ranks goals and chooses either focused funding of the highest
+unfinished priority or balanced funding using original relative weights. It also
+chooses whether to defer savings, temporary cap reductions and a short decision
+explanation. Code computes the corresponding shares and validates choices against the
+confirmed goals and aggregate envelope before persisting a strategy. The model
+then selects actions, observes their actual results, and follows up. Its next
+assessment receives the prior strategy and actual per-pot progress since that
+decision, rather than treating a suggestion as a successful outcome.
+Ask "What is your financial strategy?" to see the current decision and actual progress.
+
+The strategy and last 30 decisions persist in the fictional account SQLite store.
+The studio and progress messages show the current strategy. Strategy timestamps
+and wording do not themselves trigger another planning cycle. Cash changes,
+goal completion and new obligations do. Unchanged facts respect the existing
+follow-up schedule. If assessment fails, that turn makes no savings allocations
+using an old strategy; the worker retries later.
+
+Adaptive mode cannot add destinations, increase total savings authority, reduce
+protected reserves, loosen a cap beyond its confirmed original, withdraw pots,
+or approve/pay bills. Aggregate credits across all goals are bounded per source
+deposit even after repeated strategy changes. Temporary cap tightening is advice,
+not a real card restriction. Current supported goals are named savings targets,
+cash protection, category spending and bill resolution; this is not an unrestricted
+financial-product or debt-management agent.
+
 The controller observes new income, spending, bills and pot balances. Its tools
 include `review_spending` and `allocate_savings`. When confirmed goals have
 eligible income, its structured tool choices prioritize that actionable work
