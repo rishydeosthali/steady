@@ -26,7 +26,8 @@ SCHEMA = obj({"targets": {"type": "array", "items": obj({"name": TEXT, "amount":
               "buffer": TEXT, "weekly_essentials": TEXT})
 PROMPT = """Extract a proposed SIMULATED budget plan. Copy exact substrings from user DATA.
 targets: named savings goals, their total target amount and percentage of each NEW
-received deposit to allocate. percent must include the % sign or word percent.
+received deposit to allocate. percent is ONLY the number and % sign or word
+percent, e.g. '10%', not '10% of each new deposit'. Copy it exactly.
 caps: explicit monthly spending caps; category must be one of vacation, dining,
 entertainment, groceries, transport, healthcare, other, copied from the text.
 buffer: protected cash cushion; weekly_essentials: weekly living costs outside bills.
@@ -149,7 +150,8 @@ class BudgetActions:
                 name = label(copied(item["name"], text)).casefold()
                 target = amount(item["amount"], text)
                 percent = copied(item["percent"], text)
-                numeric = re.fullmatch(r"\s*(\d+(?:\.\d{1,2})?)\s*(?:%|percent)\s*", percent, re.I)
+                numeric = re.fullmatch(r"\s*(\d+(?:\.\d{1,2})?)\s*(?:%|percent)"
+                    r"(?:\s+of\s+(?:(?:each|every|new|received|settled)\s+)*(?:deposits?|income))?\s*", percent, re.I)
                 if not numeric or not target:
                     raise ValueError("Include a positive target and percentage")
                 bp = int(Decimal(numeric.group(1)) * 100)

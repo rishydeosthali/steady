@@ -84,6 +84,20 @@ def test_incomplete_plan_commands_request_reference_without_changing_policy(syst
     assert runtime.store.state()["budget_policy"] == before
 
 
+def test_copied_percentage_with_deposit_qualifier_is_validated(system):
+    import copy
+    runtime, controller, model = system
+    raw = copy.deepcopy(RAW)
+    raw["targets"][0]["percent"] = "10% of each new deposit"
+    raw["targets"][1]["percent"] = "5% to emergency"
+    model.json_completion = lambda *args:raw
+    # Extra arbitrary text is still rejected, even if copied from the message.
+    assert "CONFIRM PLAN" not in controller.handle(TEXT, "bad-qualifier")[0]
+    raw["targets"][1]["percent"] = "5%"
+    assert "CONFIRM PLAN" in controller.handle(TEXT, "valid-qualifier")[0]
+    assert runtime.store.state()["budget_draft"]["targets"][0]["basis_points"] == 1000
+
+
 def test_unsafe_allocations_wait_then_resume_without_duplicate_credits(system):
     runtime, controller, _ = system
     confirm(runtime, controller)
