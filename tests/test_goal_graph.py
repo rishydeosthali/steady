@@ -133,6 +133,8 @@ def test_graph_exposes_explicit_nodes_and_persists_structured_results(system):
         graph = runner.build(saver)
         assert {"observe", "assess_due", "plan_strategy", "choose_action", "execute_action",
                 "evaluate_result", "report"} <= set(graph.get_graph().nodes)
+        edges = {(e.source, e.target) for e in graph.get_graph().edges}
+        assert {target for source, target in edges if source == "choose_action"} == {"execute_action", "report"}
         saved = graph.get_state(runner.config)
         assert saved.values["results"][-1]["tool"] == "wait"
         assert saved.values["cycle_id"]

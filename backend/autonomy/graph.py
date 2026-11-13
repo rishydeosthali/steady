@@ -67,11 +67,14 @@ class GoalGraph:
             graph.add_node(name, getattr(self, name))
         graph.add_edge(START, "observe")
         graph.add_edge("observe", "assess_due")
-        graph.add_conditional_edges("assess_due", lambda s: "plan_strategy" if s["due"] else END)
+        graph.add_conditional_edges("assess_due", lambda s: "plan_strategy" if s["due"] else END,
+                                    {"plan_strategy":"plan_strategy", END:END})
         graph.add_edge("plan_strategy", "choose_action")
-        graph.add_conditional_edges("choose_action", lambda s: "report" if s["stop"] else "execute_action")
+        graph.add_conditional_edges("choose_action", lambda s: "report" if s["stop"] else "execute_action",
+                                    {"report":"report", "execute_action":"execute_action"})
         graph.add_edge("execute_action", "evaluate_result")
-        graph.add_conditional_edges("evaluate_result", lambda s: "report" if s["stop"] else "choose_action")
+        graph.add_conditional_edges("evaluate_result", lambda s: "report" if s["stop"] else "choose_action",
+                                    {"report":"report", "choose_action":"choose_action"})
         graph.add_edge("report", END)
         return graph.compile(checkpointer=checkpointer, **compile_options)
 
