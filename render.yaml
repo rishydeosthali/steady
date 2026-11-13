@@ -1,0 +1,46 @@
+# One always-on service. Dashboard, WhatsApp agent, and local demo biller share
+# a persistent disk. Do not increase replicas or start multiple WSGI processes.
+services:
+  - type: web
+    name: steady-scenario-studio
+    runtime: python
+    plan: starter
+    numInstances: 1
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m backend.hosted
+    healthCheckPath: /healthz
+    disk:
+      name: steady-simulation-data
+      mountPath: /var/data/steady
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.14
+      - key: STEADY_SIMULATION
+        value: "1"
+      - key: STEADY_EXTERNAL_BILLER
+        value: "0"
+      - key: STEADY_AUTONOMY
+        value: "0"
+      - key: STEADY_SIMULATION_DIR
+        value: /var/data/steady
+      - key: STEADY_DASHBOARD_TOKEN
+        generateValue: true
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_WHATSAPP_FROM
+        sync: false
+      - key: MOM_WHATSAPP_TO
+        sync: false
+      - key: TWILIO_CONTENT_SID
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: GMAIL_ADDRESS
+        sync: false
+      - key: GMAIL_APP_PASSWORD
+        sync: false
+      - key: CAREGIVER_EMAIL
+        sync: false
