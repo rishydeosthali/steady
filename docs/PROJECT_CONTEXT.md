@@ -69,6 +69,13 @@ explicitly confirmed aggregate envelope. The controller reassesses on financial
 changes, stores decisions and measured outcomes, then observes actual allocations.
 The account ledger enforces per-deposit aggregate credits across strategy changes;
 payment approvals, target amounts and protected reserves remain deterministic.
+The goal loop is now an explicit LangGraph `StateGraph` in
+`backend/autonomy/graph.py`. Its SQLite checkpointer stores in-flight observations,
+selected actions and results beside the existing goal database. The controller
+retains intake, financial tool dispatch and notifications; the OpenAI SDK remains
+the model integration. Recovery resumes pending nodes only while financial facts
+and authority match; otherwise it supersedes the checkpoint and replans from the
+ledger. See `LANGGRAPH_GOALS.md` for the node map and restart guarantees.
 The application stack and division of implementation roles are still open.
 
 ## Three-minute demo target

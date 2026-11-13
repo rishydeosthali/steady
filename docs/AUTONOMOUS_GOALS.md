@@ -1,6 +1,8 @@
 # Persistent budgeting and autonomous bill resolution
 
 Steady now has a bounded, model-directed controller around its existing tools.
+The planning loop runs as a checkpointed LangGraph workflow; node definitions,
+state fields and recovery tests are documented in `LANGGRAPH_GOALS.md`.
 It chooses its next action from facts and tool results rather than running one
 fixed sequence. Python owns all arithmetic, permissions, payment state changes,
 and receipt verification. This uses the existing Nessie sandbox and independent

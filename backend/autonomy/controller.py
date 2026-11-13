@@ -1,8 +1,9 @@
-"""A model selects the next tool from observed results; code enforces authority.
+"""LangGraph orchestrates model-selected tools; existing services enforce authority.
 
 One household, one confirmed budget, and one resolution goal per invoice.
 Each turn is bounded. Waiting, observations, plans and explanations survive
-restarts. Explanations are brief action rationales, not hidden chain of thought.
+restarts on persistent storage. The graph checkpoints in-flight node progress.
+Explanations are brief action rationales, not hidden chain of thought.
 """
 
 import hashlib
@@ -332,115 +333,8 @@ class Controller:
                 self._wait(10)
 
     def _run(self, force):
-        snapshot = self.observe()
-        state = self.memory.read()
-        active = [g for g in state["goals"].values() if g["status"] == "active"]
-        if not active:
-            return
-        fingerprint_facts = dict(snapshot)
-        if snapshot.get("budget_actions", {}).get("adaptive"):
-            # Strategy timestamps, wording and chosen shares are decisions,
-            # not new financial events. Do not create a self-triggering loop.
-            budget = snapshot["budget_actions"]
-            fingerprint_facts["budget_actions"] = dict(
-                plan_id=budget["plan_id"], active=budget["active"],
-                goals=[{k:g[k] for k in ("id", "target_cents", "saved_cents")} for g in budget["goals"]],
-                caps=[{k:c[k] for k in ("category", "original_limit_cents", "spent_cents")} for c in budget["caps"]])
-        fingerprint = digest(dict(snapshot=fingerprint_facts, goals=active))
-        if not force and fingerprint == state["fingerprint"] and time.time() < state["next_check"]:
-            return
-        # A later snapshot may show recovery; never silently extend the deadline.
-        for goal in active:
-            if goal["kind"] == "budget" and goal["deadline"] < snapshot["today"]:
-                self.memory.queue("deadline:" + goal["id"], "Your savings deadline has passed. "
-                                  "I will not change your goal automatically. Send a revised goal if you want a new plan.")
-                with self.memory.transaction() as data:
-                    data["goals"][goal["id"]]["status"] = "needs_review"
-        state = self.memory.read()
-        active = [g for g in state["goals"].values() if g["status"] == "active"]
-        if not active:
-            return
-        # Remember the attempted input before calling the provider: a model
-        # outage on unchanged facts must respect the durable retry schedule.
-        with self.memory.transaction() as state:
-            state["fingerprint"] = fingerprint
-            state["next_check"] = time.time() + 600
-        if self.actions is not None and snapshot.get("budget_actions", {}).get("adaptive") and snapshot["budget_actions"]["active"]:
-            # A fresh assessment precedes actions on changed facts. On model or
-            # validation failure, run() retries later without using a stale plan.
-            strategy = self.actions.replan(self.llm)
-            self.memory.event("financial_strategy", decision=strategy)
-            snapshot = self.observe()
-            self._tool("review_spending", "", {}, snapshot, [])
-        results, used = [], set()
-        replannable = [j["invoice_id"] for j in snapshot["jobs"]
-                       if j["status"] == "held" and j.get("hold_reason") == "funds"]
-        for _ in range(self.max_steps):
-            state = self.memory.read()
-            available = ["refresh", "inspect_bill", "report_bill", "wait"]
-            if any(g["kind"] == "budget" for g in active):
-                available += ["budget", "report_budget"]
-            if replannable:
-                available.append("resolve_bill")
-            action_budget = snapshot.get("budget_actions", {})
-            pending_allocations = [g["id"] for g in action_budget.get("goals", [])
-                if action_budget.get("active") and g["eligible"] and not g["complete"]
-                and ("allocate_savings", g["id"]) not in used]
-            if action_budget.get("active"):
-                available.append("review_spending")
-            if pending_allocations:
-                # Authorized work must get a turn before routine waiting/bill
-                # inspection can consume the whole reasoning budget. The model
-                # chooses which goal to act on; code retains money authority.
-                available = ["allocate_savings"]
-                if ("review_spending", "") not in used:
-                    available.append("review_spending")
-            context = dict(goals=active, facts=snapshot, reports=state["reports"],
-                           replannable_invoice_ids=replannable,
-                           available_tools=available, pending_allocation_ids=pending_allocations,
-                           recent_decisions=state["events"][-8:], results=results)
-            schema = {**ACTION_SCHEMA, "properties": {**ACTION_SCHEMA["properties"],
-                      "tool": {"type": "string", "enum": available}}}
-            if pending_allocations:
-                schema["properties"]["id"] = {"type": "string", "enum": [""] + pending_allocations}
-            action = self.llm.json_completion(SYSTEM, json.dumps(context), "steady_next_action", schema)
-            tool, key = action.get("tool"), action.get("id", "")
-            if tool not in TOOLS or not isinstance(key, str):
-                raise ValueError("Invalid tool")
-            if tool == "allocate_savings":
-                key = key.removeprefix("allocation:").casefold()
-            if (tool, key) in used:
-                self.memory.event("no_progress", tool=tool, id=key)
-                break
-            used.add((tool, key))
-            try:
-                if tool not in available:
-                    raise ValueError("Tool is unavailable for the current goals")
-                result = self._tool(tool, key, action, snapshot, results)
-                if tool == "refresh":
-                    snapshot = result
-                elif tool in {"resolve_bill", "allocate_savings"}:
-                    snapshot = self.observe()
-            except (ValueError, KeyError, BillerError, NessieError) as exc:
-                result = {"error": type(exc).__name__, "action_required": "Inspect facts or wait; no authority changed."}
-            self.memory.event("tool", tool=tool, id=key, reason=str(action.get("reason", ""))[:180], result=result)
-            results.append(dict(tool=tool, id=key, result=result))
-            if tool == "wait" and tool in available:
-                break
-        else:
-            self.memory.event("step_limit")
-        # Goal coverage is an invariant, not a model suggestion. A bounded
-        # reasoning turn must not silently starve savings behind routine bills.
-        # Arithmetic and wording remain deterministic; no goal or money changes.
-        for goal in active:
-            if goal["kind"] == "budget":
-                self._tool("report_budget", goal["id"], {}, snapshot, results)
-        if self.actions is not None and snapshot.get("budget_actions", {}).get("active"):
-            self._tool("review_spending", "", {}, snapshot, results)
-        with self.memory.transaction() as state:
-            state["fingerprint"] = fingerprint
-            if state["next_check"] <= time.time():
-                state["next_check"] = time.time() + 600
+        from .graph import GoalGraph
+        GoalGraph(self).run(force)
 
     def _tool(self, tool, key, action, snapshot, results):
         state = self.memory.read()
