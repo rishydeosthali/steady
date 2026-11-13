@@ -12,16 +12,11 @@
       <a class="wordmark" href="/">steady</a>
       <p class="studio-label">SCENARIO STUDIO</p>
       <nav aria-label="Studio views"><button data-tab="scenarios" class="nav-item active"><span>Scenarios</span></button><button data-tab="account" class="nav-item"><span>Account & bills</span></button><button data-tab="activity" class="nav-item"><span>Activity</span></button></nav>
-      <div class="sidebar-bottom"><span class="status-dot"></span><span>Simulation workspace</span><p>Money stays simulated.<br>WhatsApp messages are real.</p><button id="logout" class="sidebar-link" hidden>Lock studio</button></div>
+      <div class="sidebar-bottom"><span class="status-dot"></span><span>Simulation workspace</span><p>Money stays simulated.<br>WhatsApp messages are real.</p></div>
     </aside>
     <main>
       <header class="topbar"><span>WORKSPACE / <b>Scenario studio</b></span><span class="badge">SIMULATION</span></header>
-      <section id="access" class="access">
-        <div class="eyebrow">STEADY</div>
-        <h1>Scenario studio</h1>
-        <p>Manage your simulated account and follow Steady’s responses on WhatsApp.</p>
-        <form id="login-form"><label for="access-key">Studio access key</label><input id="access-key" type="password" autocomplete="current-password" required placeholder="Your dashboard access key"><button class="primary" type="submit">Open studio <span>→</span></button><small>Find your access key in Render → Environment → STEADY_DASHBOARD_TOKEN.</small></form>
-      </section>
+      <p id="loading" role="status">Loading studio…</p>
       <p id="error" class="notice error" role="alert" hidden></p>
       <button id="retry" class="secondary" hidden>Retry the same request safely →</button>
       <p id="success" class="notice success" role="status" hidden></p>

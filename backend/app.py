@@ -144,7 +144,7 @@ def create_app(settings: Settings | None = None, *, agent: Agent | None = None,
     if simulation is not None:
         from .simulation.web import register_dashboard
         app.extensions["simulation"] = simulation
-        register_dashboard(app, simulation, os.environ.get("STEADY_DASHBOARD_TOKEN", ""))
+        register_dashboard(app, simulation)
     if watcher is not None:
         app.extensions["watcher"] = watcher
     app.extensions["audit"] = audit

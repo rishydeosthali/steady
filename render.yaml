@@ -24,8 +24,6 @@ services:
         value: "0"
       - key: STEADY_SIMULATION_DIR
         value: /var/data/steady
-      - key: STEADY_DASHBOARD_TOKEN
-        generateValue: true
       - key: TWILIO_ACCOUNT_SID
         sync: false
       - key: TWILIO_AUTH_TOKEN

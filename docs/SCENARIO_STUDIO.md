@@ -27,9 +27,8 @@ caregiver emails are real when configured. This mode makes no Nessie requests.
    `RENDER_EXTERNAL_URL`; the app uses that stable HTTPS origin for Twilio
    signature validation and caregiver links. Set both explicitly if using your
    own custom domain. Remove old tunnel URLs from hosted environment settings.
-5. Once deployed, open Render's service URL. Copy its generated
-   `STEADY_DASHBOARD_TOKEN` from Environment into the studio's access-key field.
-   The access key is kept in page memory, not embedded in HTML or stored in a URL.
+5. Once deployed, open Render's service URL. The public demo studio loads
+   directly without an access key.
 6. In Twilio's WhatsApp Sandbox settings, set **When a message comes in** to
    `https://YOUR-SERVICE.onrender.com/whatsapp/inbound`, method **POST**.
    Set the status callback to the same origin plus `/whatsapp/status`, **POST**.
@@ -115,7 +114,7 @@ by the messaging API, not proof that the phone displayed it.
   distributed coordination and a shared database rather than extra replicas.
 - `STEADY_SIMULATION_DIR` stores account, payment, watcher, audit, and WhatsApp
   session data on the persistent disk. Redeploying preserves these records.
-- The dashboard uses an operator bearer key; webhook routes still require
+- The demo dashboard and scenario controls are public; webhook routes still require
   Twilio signatures and the configured sender. The older local-only routes
   remain local-only. Caregiver links retain their per-request authorization.
 - WhatsApp free-form messages require an inbound message in the past 24 real
@@ -136,7 +135,7 @@ by the messaging API, not proof that the phone displayed it.
 
 ## Verification
 
-`tests/test_simulation_studio.py` exercises remote operator authentication,
+`tests/test_simulation_studio.py` exercises public demo controls and private approval credentials,
 shared WhatsApp balances, exact-cent input, concurrent retries, posted-expense
 accounting, alert delivery/queueing, approval invalidation, income settlement,
 restart persistence, and reset identity. Tests use fakes and send no real

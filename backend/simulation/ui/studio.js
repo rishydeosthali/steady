@@ -1,6 +1,6 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
-let token = "", state = null, busy = false, uncertain = null, timer = null;
+let state = null, busy = false, uncertain = null;
 const money = (cents) => new Intl.NumberFormat("en-US", {style:"currency",currency:"USD"}).format(cents / 100);
 const date = (iso) => iso ? new Date(iso.slice(0,10) + "T12:00:00").toLocaleDateString("en-US", {month:"short",day:"numeric",year:"numeric"}) : "—";
 function el(tag, text, cls) { const n = document.createElement(tag); if(text != null) n.textContent=text; if(cls)n.className=cls; return n; }
@@ -14,7 +14,7 @@ async function api(operation, body, key) {
   let response;
   try {
     response=await fetch("/simulation/api/"+operation, {method:body?"POST":"GET",cache:"no-store",
-      headers:{"Authorization":"Bearer "+token,...(body?{"Content-Type":"application/json","Idempotency-Key":key}:{})},
+      headers:body?{"Content-Type":"application/json","Idempotency-Key":key}:{},
       ...(body?{body:JSON.stringify(body)}:{})});
   } catch (_) { const e=new Error("Connection lost. Retry the same request to confirm its result without applying it twice."); e.network=true; throw e; }
   let result;
@@ -29,12 +29,12 @@ async function api(operation, body, key) {
   return result;
 }
 async function refresh() {
-  if(!token || busy || uncertain)return;
-  try { render(await api("state")); }
-  catch(e) { error(e.message); if(e.status===401){lock();error(e.message);} }
+  if(busy || uncertain)return;
+  try { render(await api("state")); $("loading").hidden=true; $("workspace").hidden=false; error(""); }
+  catch(e) { error(e.message); }
 }
 async function act(operation, data={}, retry=false) {
-  if(busy || (!retry && uncertain))return;
+  if(!state || busy || (!retry && uncertain))return;
   busy=true;disabled(true);error("");notify("");
   const command=retry?uncertain:{operation,body:{...data,run_id:state.run_id},key:crypto.randomUUID()};
   try {
@@ -46,12 +46,7 @@ async function act(operation, data={}, retry=false) {
     else {uncertain=null;$("retry").hidden=true;}
     error(e.message);
     if(e.status===409){try{render(await api("state"));}catch(_) {}}
-    if(e.status===401)lock();
   } finally {busy=false;disabled(Boolean(uncertain));}
-}
-function lock() {
-  token="";state=null;uncertain=null;$("workspace").hidden=true;$("access").hidden=false;
-  $("logout").hidden=true;$("retry").hidden=true;clearInterval(timer);timer=null;
 }
 function render(next) {
   const previous=state;state=next;
@@ -133,9 +128,6 @@ function renderActivity(){
   for(const r of rows.reverse()){const li=el("li");li.append(el("small",r.date),el("p",r.text));$("timeline").append(li);}
   if(!rows.length)$("timeline").append(el("li","Changes and decisions will appear here."));
 }
-$("login-form").onsubmit=async e=>{e.preventDefault();token=$("access-key").value.trim();error("");const button=e.target.querySelector("button");button.disabled=true;
-  try{render(await api("state"));$("access").hidden=true;$("workspace").hidden=false;$("logout").hidden=false;$("access-key").value="";timer=setInterval(refresh,5000);}catch(e){token="";error(e.message);}finally{button.disabled=false;}};
-$("logout").onclick=lock;
 document.querySelectorAll("[data-tab]").forEach(b=>b.onclick=()=>{document.querySelectorAll("[data-tab]").forEach(n=>n.classList.toggle("active",n===b));document.querySelectorAll("[data-view]").forEach(n=>n.hidden=n.dataset.view!==b.dataset.tab);});
 document.querySelectorAll("[data-form]").forEach(b=>b.onclick=()=>{document.querySelectorAll("[data-form]").forEach(n=>n.classList.toggle("selected",n===b));document.querySelectorAll(".change-form").forEach(n=>n.hidden=n.id!==b.dataset.form+"-form");});
 $("expense-form").onsubmit=e=>{e.preventDefault();act("expense",Object.fromEntries(new FormData(e.target)));};
@@ -149,3 +141,5 @@ $("reset-confirm").onclick=()=>{const template=$("starting-account").value;$("re
 $("save-open").onclick=()=>$("save-dialog").showModal();$("save-cancel").onclick=()=>$("save-dialog").close();
 $("save-form").onsubmit=e=>{e.preventDefault();const name=$("scenario-name").value;$("save-dialog").close();act("save",{name});};
 $("load").onclick=()=>{if(!$("saved").value){error("Choose a saved scenario first.");return;}if(confirm("Load this scenario as a new run? Current approvals and pending messages will be cleared."))act("load",{saved_id:$("saved").value});};
+refresh();
+setInterval(refresh,5000);
