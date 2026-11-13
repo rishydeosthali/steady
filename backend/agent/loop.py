@@ -43,7 +43,8 @@ def _names_a_payment(body: str) -> bool:
 
 class Agent:
     def __init__(self, llm: LLM, nessie: NessieClient, customer_first_name: str, *,
-                 payments=None, watcher=None, audit=None, photos: PhotoIntake | None = None):
+                 payments=None, watcher=None, audit=None, photos: PhotoIntake | None = None,
+                 autonomy=None):
         self._llm = llm
         self._nessie = nessie
         self._customer = customer_first_name
@@ -51,6 +52,7 @@ class Agent:
         self._watcher = watcher
         self._audit = audit
         self._photos = photos
+        self._autonomy = autonomy
 
     def _finish(self, kind: str, reason: str, messages: list[str], **detail) -> list[str]:
         if self._audit is not None:
@@ -99,6 +101,11 @@ class Agent:
                 if handled is not None:
                     return self._finish("decision", "bill photo reply handled in code", handled,
                                         intent=simple)
+
+        if self._autonomy is not None:
+            handled = self._autonomy.handle(body, message_id)
+            if handled is not None:
+                return self._finish("decision", "persistent goal conversation", handled)
 
         try:
             parsed = parse_intent(self._llm, body)
