@@ -25,6 +25,15 @@ Ask "How is my budget plan?" for progress. Confirming a replacement plan keeps
 existing pots but excludes all income already completed at that confirmation,
 so changing a rule cannot allocate an old deposit again.
 
+Ask a spending what-if question such as "Can I spend $100 on vacation?" or
+"What if I spend $20 on dining?". For an existing policy, Steady compares the
+single stated amount against both the category's remaining monthly cap and
+checking cash after known bills, the cushion and 30 days of essentials. It
+recommends reducing or deferring a purchase that exceeds that allowance. Pots
+are excluded from spending cash; uncertain payments reduce the allowance to
+zero. Ambiguous amounts/categories require clarification. A preview posts no
+expense and makes no transfer.
+
 ## Agent behavior
 
 The controller observes new income, spending, bills and pot balances. Its tools
@@ -83,6 +92,12 @@ restart, batch rollback, and three approved simulated bill payments alongside
 savings allocations. Existing signed Slack approval and cancellation tests run
 unchanged. Real-model tests additionally verify actual selection of the new
 allocation tools; no external messages are sent in those local rehearsals.
+
+Further checks cover partial allocations with exact-cent recovery, future-income
+gating, repeated confirmation without re-crediting deposits, expired drafts,
+cap-aware spending previews and a model failure immediately after a successful
+allocation. Each committed allocation queues a progress snapshot before the
+next model call, so later model errors cannot conceal recorded progress.
 
 Live Slack rehearsal on November 12, 2026 confirmed a $22,000 car/10% policy
 and $1,000 emergency/5% policy. A $2,500 deposit produced $250/$125 allocations;

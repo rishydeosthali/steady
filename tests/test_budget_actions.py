@@ -240,3 +240,87 @@ def test_plain_budget_questions_recall_named_plan_without_starting_new_intake(sy
     assert "$22,000.00" in controller.handle("What is my car goal?", "status-car")[0]
     assert not controller.memory.read().get("intake")
     assert runtime.budget.snapshot()["active"]
+
+
+def test_spending_question_respects_vacation_cap_without_mutation(system):
+    runtime, controller, _ = system
+    confirm(runtime, controller)
+    change(runtime, "expense", merchant="Hotel", amount="150", category="vacation")
+    before = runtime.store.state()
+    result = controller.handle("Can I spend $100 on vacation?", "preview-cap")
+    assert result and "$50.00" in result[0] and "cap" in result[0]
+    assert "No expense or transfer was made" in result[0]
+    after = runtime.store.state()
+    for key in ("balance_cents", "purchases", "savings_pots", "budget_policy"):
+        assert after[key] == before[key]
+
+
+def test_spending_question_uses_cash_reserves_and_rejects_ambiguous_amounts(system):
+    runtime, controller, _ = system
+    confirm(runtime, controller)
+    with runtime.store.tx() as state:
+        state["balance_cents"] = 50000
+    result = controller.handle("What if I spend $20 on dining?", "preview-cash")[0]
+    assert "$0.00" in result and "bills" in result
+    result = controller.handle("Can I spend $20 or $50 on vacation?", "preview-many")[0]
+    assert "one" in result.lower()
+    assert not runtime.store.state().get("savings_allocations")
+
+
+def test_successful_allocation_is_reported_even_if_next_model_call_fails(system):
+    runtime, controller, model = system
+    confirm(runtime, controller)
+    change(runtime, "income", amount="1000", description="Payday")
+    model.actions = [action("allocate_savings", "car")]
+    controller.run()
+    controller.flush()
+    assert runtime.store.state()["savings_pots"]["car"] == 10000
+    assert any("car: $100.00 actually allocated" in text for _, text in runtime.twilio.sent)
+    # Recovery must allocate only the still-unfunded goal, not repeat car.
+    model.actions = [action("allocate_savings", "emergency"), action("wait")]
+    controller.run(force=True)
+    assert runtime.store.state()["savings_pots"] == {"car":10000, "emergency":5000}
+    assert len(runtime.store.state()["savings_allocations"]) == 2
+
+
+def test_partial_allocation_completes_exactly_after_safe_cash_returns(system):
+    runtime, controller, _ = system
+    confirm(runtime, controller)
+    # Known bills + cushion + rounded-up 30-day essentials = $883.94.
+    with runtime.store.tx() as state:
+        state["balance_cents"] = 0
+    change(runtime, "income", amount="900", description="Restricted payday")
+    first = runtime.budget.allocate("car")
+    assert first["allocated_cents"] == 1606
+    assert runtime.budget.allocate("emergency")["allocated_cents"] == 0
+    change(runtime, "income", amount="1000", description="Recovery payday")
+    runtime.budget.allocate("car")
+    runtime.budget.allocate("emergency")
+    assert runtime.store.state()["savings_pots"] == {"car":19000, "emergency":9500}
+    assert runtime.budget.allocate("car")["allocated_cents"] == 0
+
+
+def test_future_income_and_duplicate_confirmation_never_credit_a_pot(system):
+    runtime, controller, _ = system
+    ref = confirm(runtime, controller)
+    change(runtime, "income", amount="500", description="Future payday", date="2026-11-13")
+    assert runtime.budget.allocate("car")["allocated_cents"] == 0
+    controller.handle("CONFIRM PLAN " + ref, "duplicate-confirm-new-message")
+    change(runtime, "advance")
+    assert runtime.budget.allocate("car")["allocated_cents"] == 5000
+    controller.handle("CONFIRM PLAN " + ref, "duplicate-confirm-after-transfer")
+    assert runtime.budget.allocate("car")["allocated_cents"] == 0
+    assert runtime.store.state()["savings_pots"]["car"] == 5000
+
+
+def test_expired_policy_draft_cannot_authorize_allocations(system):
+    runtime, controller, _ = system
+    controller.handle(TEXT, "expired-draft")
+    ref = runtime.store.state()["budget_draft"]["id"]
+    with runtime.store.tx() as state:
+        state["budget_draft"]["created_at"] -= 86401
+    result = controller.handle("CONFIRM PLAN " + ref, "expired-confirm")
+    assert "expired" in result[0]
+    assert not runtime.store.state().get("budget_policy")
+    with pytest.raises(ValueError):
+        runtime.budget.allocate("car")

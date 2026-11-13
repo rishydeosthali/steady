@@ -9,6 +9,7 @@ import uuid
 from decimal import Decimal
 
 from ..agent.llm import LLMError
+from ..agent.intent import parse_amount_cents
 from ..payments.money import cents, money
 from .store import label
 
@@ -65,7 +66,9 @@ class BudgetActions:
 
     def handle(self, text, sid, llm):
         command = re.fullmatch(r"\s*(CONFIRM PLAN|PAUSE PLAN|RESUME PLAN)\s+([A-F0-9]{8})\s*", text, re.I)
-        relevant = command or re.search(r"\b(budget plan|allocation|savings pots?|car fund|spending caps?)\b|\d\s*%", text, re.I)
+        categories = [c for c in CATEGORIES if re.search(r"\b" + c + r"\b", text, re.I)]
+        preview = bool(categories and re.search(r"\b(can i|can we|could i|what if|afford|should i)\b", text, re.I))
+        relevant = command or preview or re.search(r"\b(budget plan|allocation|savings pots?|car fund|spending caps?)\b|\d\s*%", text, re.I)
         if not relevant:
             return None
         if not sid:
@@ -74,7 +77,13 @@ class BudgetActions:
             state = self.runtime.store.state()
             if sid in state.get("budget_inbound", {}):
                 return []
-            if command:
+            if preview:
+                value = parse_amount_cents(text)
+                if len(categories) != 1 or value is None or value <= 0 or re.search(r"-\s*\$", text):
+                    result = ["Give one positive spending amount and one category so I can compare it with your plan. No expense or transfer was made."]
+                else:
+                    result = [self.preview(categories[0], value)]
+            elif command:
                 result = self._command(command.group(1).upper(), command.group(2).upper())
             elif re.search(r"\b(what|how|show|status|progress)\b", text, re.I):
                 result = [self.review()["text"]]
@@ -83,6 +92,32 @@ class BudgetActions:
             with self.runtime.store.tx() as state:
                 state.setdefault("budget_inbound", {})[sid] = True
             return result
+
+    def preview(self, category, value):
+        snapshot = self.snapshot()
+        if not snapshot.get("plan_id"):
+            return "Confirm a simulated budget plan first so I can check its caps and reserves. No expense or transfer was made."
+        state = self.runtime.store.state()
+        policy = state["budget_policy"]
+        jobs = self.runtime.payments.state()
+        daily = max((policy["weekly_cents"]+6)//7,
+                    self.runtime.payments.essentials_policy() if self.runtime.payments.essentials_policy else 0)
+        buffer = max(policy["buffer_cents"], self.runtime.payments.buffer)
+        paid = self.runtime.payments._spent_cents(jobs, state["account_id"])
+        bills = sum(b["amount_cents"] for b in state["invoices"] if b["status"] == "unpaid")
+        cash = max(0, state["balance_cents"]-paid-bills-buffer-daily*30)
+        uncertain = any(j["status"] == "reconciling" for j in jobs["jobs"].values())
+        if uncertain:
+            cash = 0
+        cap = next((c for c in snapshot["caps"] if c["category"] == category), None)
+        allowance = min(cash, cap["remaining_cents"]) if cap else cash
+        decision = ("That fits the current simulated allowance." if value <= allowance else
+                    "Defer or reduce that purchase to protect your savings goals.")
+        return (f"For {category}, {money(allowance)} is available after known bills, your cushion, "
+                "and 30 days of essentials" + (" and the remaining monthly cap" if cap else "") +
+                f". Your proposed purchase is {money(value)}. {decision} " +
+                ("A payment outcome is uncertain, so treat available spending as zero. " if uncertain else "") +
+                "Saved pots are not spending cash. No expense or transfer was made.")
 
     def _draft(self, text, llm):
         try:
