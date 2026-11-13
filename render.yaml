@@ -38,9 +38,9 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
-      - key: GMAIL_ADDRESS
+      - key: RESEND_API_KEY
         sync: false
-      - key: GMAIL_APP_PASSWORD
-        sync: false
+      - key: RESEND_FROM
+        value: onboarding@resend.dev
       - key: CAREGIVER_EMAIL
         sync: false
