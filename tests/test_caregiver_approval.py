@@ -11,7 +11,7 @@ from backend.app import create_app
 from backend.payments.caregiver import CaregiverMailer, MailError
 from backend.payments.service import MAX_EMAIL_ATTEMPTS, PaymentService
 from tests.conftest import MOM, FakeLLM, FakeNessie
-from tests.test_app import InlineExecutor, RecordingTwilio
+from tests.test_app import InlineExecutor, RecordingTwilio, form, sign
 from tests.test_external_biller import (ANCHOR, FakeMailer, approve, job, provider,  # noqa: F401
                                         senior_yes, setup_service)
 
@@ -56,10 +56,15 @@ def test_hi_then_flush_does_not_resend_a_queued_proposal(provider,tmp_path,setti
     service = PaymentService(tmp_path/"hi-once.sqlite3",client,bank,transport,MOM,demo_date=ANCHOR,
                              mailer=FakeMailer(),caregiver_name="Sarah")
     service.tick()
-    out = Agent(FakeLLM(),bank,"Margaret",payments=service).respond("hi")
+    # Exercise actual successful transport delivery before acknowledging the
+    # proposal. Merely constructing an agent reply must not count as a send.
+    web = app_for(settings,service,bank,transport)
+    data = form("hi")
+    response = web.post("/whatsapp/inbound",data=data,
+                        headers={"X-Twilio-Signature":sign(data)})
     service.flush()
-    assert "Reply YES or NO" in out[0]
-    assert [body for _,body in transport.sent if "Reply YES or NO" in body] == []
+    assert response.status_code == 200
+    assert len([body for _,body in transport.sent if "Reply YES or NO" in body]) == 1
 
 
 def test_hi_repeats_the_open_yes_or_no_proposal(provider,tmp_path,settings):
