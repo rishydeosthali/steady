@@ -66,9 +66,10 @@ class BudgetActions:
 
     def handle(self, text, sid, llm):
         command = re.fullmatch(r"\s*(CONFIRM PLAN|PAUSE PLAN|RESUME PLAN)\s+([A-F0-9]{8})\s*", text, re.I)
+        incomplete = re.fullmatch(r"\s*(CONFIRM PLAN|PAUSE PLAN|RESUME PLAN)(?:\s+\S+)?\s*", text, re.I)
         categories = [c for c in CATEGORIES if re.search(r"\b" + c + r"\b", text, re.I)]
         preview = bool(categories and re.search(r"\b(can i|can we|could i|what if|afford|should i)\b", text, re.I))
-        relevant = command or preview or re.search(r"\b(budget plan|allocation|savings pots?|car fund|spending caps?)\b|\d\s*%", text, re.I)
+        relevant = command or incomplete or preview or re.search(r"\b(budget plan|allocation|savings pots?|car fund|spending caps?)\b|\d\s*%", text, re.I)
         if not relevant:
             return None
         if not sid:
@@ -85,6 +86,8 @@ class BudgetActions:
                     result = [self.preview(categories[0], value)]
             elif command:
                 result = self._command(command.group(1).upper(), command.group(2).upper())
+            elif incomplete:
+                result = [f"Reply {incomplete.group(1).upper()} followed by the eight-character plan reference from its readback. No plan or money changed."]
             elif re.search(r"\b(what|how|show|status|progress)\b", text, re.I):
                 result = [self.review()["text"]]
             else:
