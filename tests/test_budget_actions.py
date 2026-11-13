@@ -73,6 +73,17 @@ def test_car_and_emergency_receive_only_authorized_new_income_once(system):
     assert any("actually allocated" in text for _, text in runtime.twilio.sent)
 
 
+@pytest.mark.parametrize("command", ["PAUSE PLAN", "RESUME PLAN", "CONFIRM PLAN", "PAUSE PLAN invalid"])
+def test_incomplete_plan_commands_request_reference_without_changing_policy(system, command):
+    runtime, controller, _ = system
+    confirm(runtime, controller)
+    before = runtime.store.state()["budget_policy"]
+    response = controller.handle(command, "incomplete-command")
+    assert "eight-character plan reference" in response[0]
+    assert "No plan or money changed" in response[0]
+    assert runtime.store.state()["budget_policy"] == before
+
+
 def test_unsafe_allocations_wait_then_resume_without_duplicate_credits(system):
     runtime, controller, _ = system
     confirm(runtime, controller)
