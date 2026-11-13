@@ -240,3 +240,28 @@ def test_plain_budget_questions_recall_named_plan_without_starting_new_intake(sy
     assert "$22,000.00" in controller.handle("What is my car goal?", "status-car")[0]
     assert not controller.memory.read().get("intake")
     assert runtime.budget.snapshot()["active"]
+
+
+def test_spending_question_respects_vacation_cap_without_mutation(system):
+    runtime, controller, _ = system
+    confirm(runtime, controller)
+    change(runtime, "expense", merchant="Hotel", amount="150", category="vacation")
+    before = runtime.store.state()
+    result = controller.handle("Can I spend $100 on vacation?", "preview-cap")
+    assert result and "$50.00" in result[0] and "cap" in result[0]
+    assert "No expense or transfer was made" in result[0]
+    after = runtime.store.state()
+    for key in ("balance_cents", "purchases", "savings_pots", "budget_policy"):
+        assert after[key] == before[key]
+
+
+def test_spending_question_uses_cash_reserves_and_rejects_ambiguous_amounts(system):
+    runtime, controller, _ = system
+    confirm(runtime, controller)
+    with runtime.store.tx() as state:
+        state["balance_cents"] = 50000
+    result = controller.handle("What if I spend $20 on dining?", "preview-cash")[0]
+    assert "$0.00" in result and "bills" in result
+    result = controller.handle("Can I spend $20 or $50 on vacation?", "preview-many")[0]
+    assert "one" in result.lower()
+    assert not runtime.store.state().get("savings_allocations")
