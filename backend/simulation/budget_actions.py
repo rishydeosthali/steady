@@ -64,12 +64,31 @@ class BudgetActions:
         weekly = (self.runtime.store.state().get("budget_policy") or {}).get("weekly_cents", 0)
         return (weekly + 6) // 7
 
+    def reserves(self):
+        state = self.runtime.store.state()
+        policy = state.get("budget_policy") or {}
+        payments = self.runtime.payments.state()
+        daily = max((policy.get("weekly_cents", 0)+6)//7,
+                    self.runtime.payments.essentials_policy() if self.runtime.payments.essentials_policy else 0)
+        cushion = max(policy.get("buffer_cents", 20000), self.runtime.payments.buffer)
+        paid = self.runtime.payments._spent_cents(payments, state["account_id"])
+        bills = sum(b["amount_cents"] for b in state["invoices"] if b["status"] == "unpaid")
+        uncertain = any(j["status"] == "reconciling" for j in payments["jobs"].values())
+        headroom = state["balance_cents"]-paid-bills-cushion-daily*30
+        return dict(headroom_cents=max(0, headroom) if not uncertain else 0,
+                    shortfall_cents=max(0, -headroom), uncertain_payment=uncertain,
+                    unpaid_bills_cents=bills, cushion_cents=cushion, essentials_cents=daily*30)
+
+    def replan(self, llm):
+        from .strategy import choose
+        return choose(self, llm)
+
     def handle(self, text, sid, llm):
         command = re.fullmatch(r"\s*(CONFIRM PLAN|PAUSE PLAN|RESUME PLAN)\s+([A-F0-9]{8})\s*", text, re.I)
         incomplete = re.fullmatch(r"\s*(CONFIRM PLAN|PAUSE PLAN|RESUME PLAN)(?:\s+\S+)?\s*", text, re.I)
         categories = [c for c in CATEGORIES if re.search(r"\b" + c + r"\b", text, re.I)]
         preview = bool(categories and re.search(r"\b(can i|can we|could i|what if|afford|should i)\b", text, re.I))
-        relevant = command or incomplete or preview or re.search(r"\b(budget plan|allocation|savings pots?|car fund|spending caps?)\b|\d\s*%", text, re.I)
+        relevant = command or incomplete or preview or re.search(r"\b(budget plan|allocation|savings pots?|car fund|spending caps?|priorities|strategy)\b|\d\s*%", text, re.I)
         if not relevant:
             return None
         if not sid:
@@ -88,7 +107,7 @@ class BudgetActions:
                 result = self._command(command.group(1).upper(), command.group(2).upper())
             elif incomplete:
                 result = [f"Reply {incomplete.group(1).upper()} followed by the eight-character plan reference from its readback. No plan or money changed."]
-            elif re.search(r"\b(what|how|show|status|progress)\b", text, re.I):
+            elif re.search(r"\b(what|how|why|show|status|progress)\b", text, re.I):
                 result = [self.review()["text"]]
             else:
                 result = self._draft(text[:4000], llm)
@@ -155,7 +174,8 @@ class BudgetActions:
                     "cap vacation at $200 monthly, keep $200 cushion and $100 weekly essentials. "
                     "Up to four goals may share at most 100% of income."]
         ref = uuid.uuid4().hex[:8].upper()
-        policy = dict(id=ref, targets=targets, caps=caps, buffer_cents=buffer, weekly_cents=weekly,
+        adaptive = bool(re.search(r"\badapt priorities automatically\b", text, re.I))
+        policy = dict(id=ref, targets=targets, caps=caps, buffer_cents=buffer, weekly_cents=weekly, adaptive=adaptive,
                       created_at=time.time(), status="draft")
         with self.runtime.store.tx() as state:
             state["budget_draft"] = policy
@@ -166,6 +186,9 @@ class BudgetActions:
                 f"and {money(weekly)} weekly essentials outside bills. I may move fictional checking money "
                 "into these named savings pots only after new income arrives and bills/reserves are safe. "
                 "Past income is excluded; a cap warns about future spending, not reverses posted purchases. "
+                + (f"Adaptive authority: I may redistribute up to {sum(g['basis_points'] for g in targets)/100:g}% "
+                   "of each new deposit among these goals, defer savings, and temporarily tighten category caps. "
+                   "I will reassess progress and restore priorities as conditions change; targets, reserves, and payment approvals stay fixed. " if adaptive else "") +
                 f"Reply CONFIRM PLAN {ref} to authorize these simulated allocations. No real bank transfer."]
 
     def _command(self, command, ref):
@@ -178,6 +201,7 @@ class BudgetActions:
                     return ["That plan proposal is missing or expired. Please send the plan again."]
                 draft.update(status="active", excluded_deposits=[d["_id"] for d in state["deposits"] if d["status"] == "completed"])
                 state["budget_policy"] = draft
+                state.pop("budget_strategy", None)
                 state["budget_draft"] = None
                 for g in draft["targets"]:
                     state.setdefault("savings_pots", {}).setdefault(g["id"], 0)
@@ -195,28 +219,40 @@ class BudgetActions:
         policy = state.get("budget_policy")
         if not policy:
             return dict(active=False, goals=[], caps=[], allocations=[])
+        strategy = state.get("budget_strategy") or {}
+        if strategy.get("plan_id") != policy["id"]:
+            strategy = {}
+        adaptive = policy.get("adaptive", False)
+        envelope = sum(g["basis_points"] for g in policy["targets"])
         goals = []
         for g in policy["targets"]:
+            share = strategy.get("shares", {}).get(g["id"], 0) if adaptive else g["basis_points"]
             saved = state.get("savings_pots", {}).get(g["id"], 0)
             eligible = []
             for d in state["deposits"]:
                 if (d["status"] != "completed" or d["_id"] in policy["excluded_deposits"]
                         or d["transaction_date"] > state["today"]):
                     continue
-                desired = cents(d["amount"]) * g["basis_points"] // 10000
+                desired = cents(d["amount"]) * share // 10000
                 done = sum(a["amount_cents"] for a in state.get("savings_allocations", [])
                            if a["deposit_id"] == d["_id"] and a["goal_id"] == g["id"])
-                if desired > done:
-                    eligible.append(dict(deposit_id=d["_id"], remaining_cents=desired-done))
-            goals.append({**g, "saved_cents": saved, "remaining_cents": max(0, g["target_cents"]-saved),
+                total_done = sum(a["amount_cents"] for a in state.get("savings_allocations", []) if a["deposit_id"] == d["_id"])
+                remaining = min(desired-done, cents(d["amount"])*envelope//10000-total_done)
+                if remaining > 0 and not (adaptive and strategy.get("defer_savings", True)):
+                    eligible.append(dict(deposit_id=d["_id"], remaining_cents=remaining))
+            goals.append({**g, "basis_points":share, "default_basis_points":g["basis_points"], "saved_cents": saved, "remaining_cents": max(0, g["target_cents"]-saved),
                           "eligible": eligible if saved < g["target_cents"] else [], "complete": saved >= g["target_cents"]})
         caps = []
         for category, limit in policy["caps"].items():
+            original_limit = limit
+            if adaptive:
+                limit = strategy.get("caps", {}).get(category, limit)
             spent = sum(cents(p["amount"]) for p in state["purchases"] if p.get("category") == category
                         and p.get("status") == "completed" and p["purchase_date"][:7] == state["today"][:7])
-            caps.append(dict(category=category, limit_cents=limit, spent_cents=spent,
+            caps.append(dict(category=category, limit_cents=limit, original_limit_cents=original_limit, spent_cents=spent,
                              remaining_cents=max(0, limit-spent), over_cents=max(0, spent-limit)))
         return dict(active=policy["status"] == "active", plan_id=policy["id"], goals=goals, caps=caps,
+                    adaptive=adaptive, strategy=strategy,
                     allocations=state.get("savings_allocations", [])[-20:])
 
     def allocate(self, goal_id):
@@ -248,7 +284,8 @@ class BudgetActions:
                     requested = cents(deposit["amount"]) * goal["basis_points"] // 10000
                     credited = sum(a["amount_cents"] for a in state.get("savings_allocations", [])
                                    if a["deposit_id"] == source["deposit_id"] and a["goal_id"] == goal_id)
-                    value = min(max(0, requested-credited), headroom, remaining)
+                    source_headroom = source["remaining_cents"]
+                    value = min(max(0, requested-credited), source_headroom, headroom, remaining)
                     if value <= 0:
                         break
                     state["balance_cents"] -= value
@@ -268,6 +305,14 @@ class BudgetActions:
         if not snap["goals"]:
             return dict(text="No simulated allocation plan is active. Tell me your named targets and income percentages.", **snap)
         lines = [f"Simulated budget plan {snap['plan_id']} ({'active' if snap['active'] else 'paused'})."]
+        if snap.get("adaptive"):
+            strategy = snap["strategy"]
+            lines.append("Adaptive strategy: " + (strategy.get("reason") or "Waiting for a validated financial assessment; savings allocations wait."))
+            if strategy:
+                lines.append(f"Allocation approach: {strategy['allocation_mode']}. Priority order: " +
+                             ", ".join(strategy["priority_order"]) + ".")
+            if strategy.get("defer_savings"):
+                lines.append("Savings are temporarily deferred to protect cash for obligations.")
         for g in snap["goals"]:
             pending = sum(e["remaining_cents"] for e in g["eligible"])
             lines.append(f"{g['id']}: {money(g['saved_cents'])} actually allocated in this simulation toward "

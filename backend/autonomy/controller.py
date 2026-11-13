@@ -83,8 +83,10 @@ allocate_savings: allocate a confirmed goal's authorized percentage of NEW recei
 income into its simulated pot; id is that goal's id from budget_actions.goals.
 Code computes and bounds the amount and destination. If eligible income is present,
 try allocating before waiting. If unsafe, inspect the result and wait for recovery.
-Never invent income, change percentages/caps, withdraw a pot or exceed the confirmed
-policy. Give each eligible goal a turn, then review spending. A simulated pot
+Never invent income, change confirmed authority, withdraw a pot or exceed the
+policy. Adaptive plans contain a separately validated strategy: use its current
+shares, deferrals and caps. These may differ from default shares within delegated
+authority. Give each eligible goal a turn, then review spending. A simulated pot
 allocation is actual progress in the fictional ledger, not a real bank transfer."""
 
 
@@ -335,7 +337,16 @@ class Controller:
         active = [g for g in state["goals"].values() if g["status"] == "active"]
         if not active:
             return
-        fingerprint = digest(dict(snapshot=snapshot, goals=active))
+        fingerprint_facts = dict(snapshot)
+        if snapshot.get("budget_actions", {}).get("adaptive"):
+            # Strategy timestamps, wording and chosen shares are decisions,
+            # not new financial events. Do not create a self-triggering loop.
+            budget = snapshot["budget_actions"]
+            fingerprint_facts["budget_actions"] = dict(
+                plan_id=budget["plan_id"], active=budget["active"],
+                goals=[{k:g[k] for k in ("id", "target_cents", "saved_cents")} for g in budget["goals"]],
+                caps=[{k:c[k] for k in ("category", "original_limit_cents", "spent_cents")} for c in budget["caps"]])
+        fingerprint = digest(dict(snapshot=fingerprint_facts, goals=active))
         if not force and fingerprint == state["fingerprint"] and time.time() < state["next_check"]:
             return
         # A later snapshot may show recovery; never silently extend the deadline.
@@ -354,6 +365,13 @@ class Controller:
         with self.memory.transaction() as state:
             state["fingerprint"] = fingerprint
             state["next_check"] = time.time() + 600
+        if self.actions is not None and snapshot.get("budget_actions", {}).get("adaptive") and snapshot["budget_actions"]["active"]:
+            # A fresh assessment precedes actions on changed facts. On model or
+            # validation failure, run() retries later without using a stale plan.
+            strategy = self.actions.replan(self.llm)
+            self.memory.event("financial_strategy", decision=strategy)
+            snapshot = self.observe()
+            self._tool("review_spending", "", {}, snapshot, [])
         results, used = [], set()
         replannable = [j["invoice_id"] for j in snapshot["jobs"]
                        if j["status"] == "held" and j.get("hold_reason") == "funds"]
@@ -437,7 +455,7 @@ class Controller:
                 return result
             report = self.actions.review()
             # Progress is sent once for each changed report, not once per poll.
-            self.memory.queue("allocation:plan:" + snapshot["today"] + ":" + digest(report), report["text"])
+            self.memory.queue("allocation:plan:" + snapshot["today"] + ":" + digest(report["text"]), report["text"])
             return report
         if tool == "wait":
             minutes = action.get("minutes")

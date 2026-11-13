@@ -139,6 +139,7 @@ function renderActivity(){
 function renderBudget(){
   const budget=state.budget||{goals:[],caps:[],allocations:[]};
   $("budget-status").textContent=budget.plan_id?"Plan "+budget.plan_id+" · "+(budget.active?"Active":"Paused"):"No allocation plan yet. Confirm one with Steady to authorize fictional transfers.";
+    if(budget.adaptive)$("budget-status").textContent+=" · Adaptive: "+(budget.strategy.reason||"Waiting for financial assessment")+(budget.strategy.defer_savings?" Savings temporarily deferred.":"");
   $("savings-goals").replaceChildren();$("spending-caps").replaceChildren();$("savings-transfers").replaceChildren();
   for(const goal of budget.goals){const row=el("article",null,"record");
     row.append(el("strong",goal.id),el("p",money(goal.saved_cents)+" saved in simulation / "+money(goal.target_cents)+" target"),
