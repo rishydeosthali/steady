@@ -715,7 +715,7 @@ class PaymentService:
     def flush(self):
         with self._tx() as (_,state):
             for item in state["outbox"]:
-                if item["status"] not in {"pending","awaiting_session"}:
+                if item["status"] not in {"pending","awaiting_session","failed"}:
                     continue
                 job = state["jobs"].get(item["request_id"])
                 if item["kind"] == "caregiver_email":
