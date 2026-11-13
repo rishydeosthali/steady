@@ -250,9 +250,21 @@ class Ledger:
         return {"id": cur.lastrowid, "fire_at": fire_at, "message": text[:400]}
 
     def due_followups(self, now: datetime | None = None) -> list[str]:
+        """Legacy consume interface. Delivery workers use pending/ack instead."""
         when = (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")
         with self._lock, self._db:
             rows = self._db.execute("SELECT seq, message FROM followups WHERE sent = 0 AND fire_at <= ?",
                                     (when,)).fetchall()
             self._db.executemany("UPDATE followups SET sent = 1 WHERE seq = ?", [(r["seq"],) for r in rows])
         return [r["message"] for r in rows]
+
+    def pending_followups(self, now: datetime | None = None) -> list[dict]:
+        when = (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")
+        with self._lock:
+            rows = self._db.execute("SELECT seq, message FROM followups WHERE sent=0 AND fire_at<=?",
+                                    (when,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def acknowledge_followup(self, seq: int) -> None:
+        with self._lock, self._db:
+            self._db.execute("UPDATE followups SET sent=1 WHERE seq=?", (seq,))
