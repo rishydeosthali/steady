@@ -61,8 +61,9 @@ progress, not a replacement financial ledger.
 
 1. The controller loads the latest checkpoint before starting another cycle.
 2. If a node is pending, it refreshes finances and active goal authority.
-3. If these still match the checkpoint, it respects retry timing and resumes the
-   pending node. Completed nodes and saved action selection are not rerun.
+3. If these still match the checkpoint, it resumes the pending node immediately
+   when no node error is recorded. Failed nodes respect the stored retry timing.
+   Completed nodes and saved action selection are not rerun.
 4. If finances or authority changed, it supersedes the pending path and starts a
    fresh observation/planning cycle. This covers new expenses, paused/replaced
    policies, account or simulation resets, changed bills and approvals.

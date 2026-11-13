@@ -88,7 +88,8 @@ class GoalGraph:
                 memory = c.memory.read()
                 active = [g for g in memory["goals"].values() if g["status"] == "active"]
                 unchanged = revision(fresh, active) == checkpoint.values.get("observed_revision")
-                if unchanged and not force and time.time() < memory["next_check"]:
+                failed = any(task.error for task in checkpoint.tasks)
+                if unchanged and failed and not force and time.time() < memory["next_check"]:
                     return
                 if unchanged:
                     c.memory.event("graph_resumed", next_nodes=list(checkpoint.next))

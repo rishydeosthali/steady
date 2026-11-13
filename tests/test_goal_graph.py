@@ -41,7 +41,7 @@ def test_restart_before_execution_resumes_saved_action_without_reasking_model(sy
     assert runtime.store.state()["savings_pots"] == {"car":0, "emergency":0}
     next_model = Reasoner([action("allocate_savings", "emergency"), action("wait")])
     restarted = restart(runtime, controller, next_model)
-    restarted.run(force=True)
+    restarted.run()
     assert next_model.contexts[0]["results"][0]["result"]["allocated_cents"] == 10000
     assert runtime.store.state()["savings_pots"] == {"car":10000, "emergency":5000}
     assert not checkpoint(restarted).next
@@ -58,7 +58,7 @@ def test_restart_after_checkpointed_allocation_does_not_execute_it_again(system)
     assert saved.values["results"][0]["result"]["allocated_cents"] == 10000
     next_model = Reasoner([action("allocate_savings", "emergency"), action("wait")])
     restarted = restart(runtime, controller, next_model)
-    restarted.run(force=True)
+    restarted.run()
     state = runtime.store.state()
     assert state["savings_pots"] == {"car":10000, "emergency":5000}
     assert len(state["savings_allocations"]) == 2
@@ -165,7 +165,7 @@ runtime=SimulationRuntime(config,messenger,root,mailer=FakeMailer(),today="2026-
 controller=Controller(Memory(root/"goals.sqlite"),Reasoner([action("allocate_savings","emergency"),action("wait")]),
     runtime.bank,messenger,config.recipient,payments=runtime.payments,actions=runtime.budget,
     lock=runtime.lock,source="local simulation")
-controller.run(force=True)
+controller.run()
 state=runtime.store.state()
 assert any(e["kind"]=="graph_resumed" for e in controller.memory.read()["events"])
 print(json.dumps(dict(pots=state["savings_pots"],receipts=len(state["savings_allocations"]))))
