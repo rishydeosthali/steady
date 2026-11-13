@@ -298,3 +298,29 @@ def test_partial_allocation_completes_exactly_after_safe_cash_returns(system):
     runtime.budget.allocate("emergency")
     assert runtime.store.state()["savings_pots"] == {"car":19000, "emergency":9500}
     assert runtime.budget.allocate("car")["allocated_cents"] == 0
+
+
+def test_future_income_and_duplicate_confirmation_never_credit_a_pot(system):
+    runtime, controller, _ = system
+    ref = confirm(runtime, controller)
+    change(runtime, "income", amount="500", description="Future payday", date="2026-11-13")
+    assert runtime.budget.allocate("car")["allocated_cents"] == 0
+    controller.handle("CONFIRM PLAN " + ref, "duplicate-confirm-new-message")
+    change(runtime, "advance")
+    assert runtime.budget.allocate("car")["allocated_cents"] == 5000
+    controller.handle("CONFIRM PLAN " + ref, "duplicate-confirm-after-transfer")
+    assert runtime.budget.allocate("car")["allocated_cents"] == 0
+    assert runtime.store.state()["savings_pots"]["car"] == 5000
+
+
+def test_expired_policy_draft_cannot_authorize_allocations(system):
+    runtime, controller, _ = system
+    controller.handle(TEXT, "expired-draft")
+    ref = runtime.store.state()["budget_draft"]["id"]
+    with runtime.store.tx() as state:
+        state["budget_draft"]["created_at"] -= 86401
+    result = controller.handle("CONFIRM PLAN " + ref, "expired-confirm")
+    assert "expired" in result[0]
+    assert not runtime.store.state().get("budget_policy")
+    with pytest.raises(ValueError):
+        runtime.budget.allocate("car")
