@@ -706,7 +706,8 @@ class PaymentService:
             self._audit(state,"caregiver_email_failed_"+type(exc).__name__,job)
             if job["caregiver_email_attempts"] >= MAX_EMAIL_ATTEMPTS:
                 item["status"], item["token"] = "failed", None
-                self._emit(state,f"I couldn't reach {self.caregiver_name} by email, so the {job['payee']} "
+                delivery = getattr(self.mailer, "delivery_name", "email")
+                self._emit(state,f"I couldn't reach {self.caregiver_name} by {delivery}, so the {job['payee']} "
                            "payment is on hold. Nothing has been paid.",job)
             return
         item["status"], item["token"] = "sent", None
@@ -719,6 +720,10 @@ class PaymentService:
                     continue
                 job = state["jobs"].get(item["request_id"])
                 if item["kind"] == "caregiver_email":
+                    # Exhausted email attempts are terminal. Only failed WhatsApp
+                    # deliveries are eligible for the general retry path above.
+                    if item["status"] == "failed":
+                        continue
                     self._send_caregiver_email(state,item,job)
                     continue
                 if item["kind"] == "readback" and job and (job["status"] != "awaiting_user" or self.today(state)>job["expires_on"]):
@@ -739,7 +744,9 @@ class PaymentService:
                 except Exception as exc:
                     item["status"] = "failed"
                     self._audit(state,"notification_failed_"+type(exc).__name__,job)
-                    continue
+                    # Preserve causal notification order across retries. A
+                    # later receipt must not overtake its approval notice.
+                    break
                 item["status"] = "sent"
                 if item["kind"] == "readback" and job:
                     job["readback_delivered"] = True

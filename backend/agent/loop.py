@@ -16,6 +16,7 @@ import logging
 import re
 
 from ..nessie.client import CustomerNotFound, NessieClient, NessieError
+from ..payments.service import YES_WORDS, NO_WORDS
 from . import reply
 from .facts import gather_facts
 from .guide import guide, open_cosign_alert
@@ -28,6 +29,8 @@ from .speaker import SpeakerVerdict, is_greeting, screen, tripwires
 log = logging.getLogger(__name__)
 
 _PAYMENT_REF = re.compile(r"\b[0-9A-Fa-f]{8}\b")
+_EXACT_PAYMENT_DECISION = re.compile(
+    rf"\s*({YES_WORDS}|{NO_WORDS})(?:\s+[0-9A-Fa-f]{{8}})?[.!?\s]*", re.I)
 
 
 def _privacy_trip(body: str) -> bool:
@@ -84,7 +87,8 @@ class Agent:
                 return self._finish("decision", "greeting, open bill", [prompt])
             return self._finish("decision", "greeting", [reply.HELLO])
 
-        if (body or "").strip():
+        exact_payment = _EXACT_PAYMENT_DECISION.fullmatch(body or "") if media is None else None
+        if (body or "").strip() and exact_payment is None:
             verdict = screen(self._llm, body)
             if not verdict.allowed:
                 return self._refuse_outsider(body, verdict)
@@ -106,6 +110,16 @@ class Agent:
             handled = self._autonomy.handle(body, message_id)
             if handled is not None:
                 return self._finish("decision", "persistent goal conversation", handled)
+
+        # Signed, sender-checked exact commands do not need an LLM label.
+        # Forwarded text, mixed decisions and free-form instructions cannot
+        # enter this path. The payment service still checks the real reference,
+        # delivered readback, dates, duplicate IDs and separate approvals.
+        if exact_payment is not None and self._payments is not None:
+            decision = "no" if re.fullmatch(NO_WORDS, exact_payment.group(1), re.I) else "yes"
+            handled = self._payments.handle(body, decision, message_id)
+            if handled is not None:
+                return self._finish("decision", "exact payment reply handled in code", handled, intent=decision)
 
         try:
             parsed = parse_intent(self._llm, body)

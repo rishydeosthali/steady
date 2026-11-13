@@ -18,17 +18,17 @@ caregiver emails are real when configured. This mode makes no Nessie requests.
 3. Fill the prompted environment fields in Render. Use your existing Twilio
    account SID/auth token, WhatsApp sender, authorized recipient, template SID,
    and OpenAI API key. Sender and recipient use the `whatsapp:+...` format.
-   For caregiver approvals, supply `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`, and
-   `CAREGIVER_EMAIL`. Use the existing app password, not a Google login password.
+   For caregiver approvals, supply `RESEND_API_KEY` and `CAREGIVER_EMAIL` (see
+   the Resend setup below). Local or paid hosting can alternatively use
+   `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD`, and `CAREGIVER_EMAIL`.
    Keep all secrets in Render's Environment screen; never commit or paste them
    into chat. Optional `CAREGIVER_NAME` and `STEADY_CUSTOMER_NAME` customize names.
 4. Leave `PUBLIC_BASE_URL` and `STEADY_APPROVAL_BASE_URL` unset. Render supplies
    `RENDER_EXTERNAL_URL`; the app uses that stable HTTPS origin for Twilio
    signature validation and caregiver links. Set both explicitly if using your
    own custom domain. Remove old tunnel URLs from hosted environment settings.
-5. Once deployed, open Render's service URL. Copy its generated
-   `STEADY_DASHBOARD_TOKEN` from Environment into the studio's access-key field.
-   The access key is kept in page memory, not embedded in HTML or stored in a URL.
+5. Once deployed, open Render's service URL. The public demo studio loads
+   directly without an access key.
 6. In Twilio's WhatsApp Sandbox settings, set **When a message comes in** to
    `https://YOUR-SERVICE.onrender.com/whatsapp/inbound`, method **POST**.
    Set the status callback to the same origin plus `/whatsapp/status`, **POST**.
@@ -43,6 +43,38 @@ build with `pip install -r requirements.txt`, start with
 `python -m backend.hosted`, health path `/healthz`, and mount the persistent
 disk at `/var/data/steady`. Copy the environment entries from `render.yaml`.
 These are host configuration fields; no local terminal is needed.
+
+### Free demo hosting and caregiver email
+
+For a short demo on Render Free, set `STEADY_SIMULATION_DIR=work/simulation`
+and do not attach a disk. The service sleeps when inactive; saved scenarios,
+approvals, and history can disappear on restart or redeploy. This setup is
+for demonstrations rather than ongoing monitoring.
+
+Render Free blocks SMTP, including Gmail on port 587. Use Resend's HTTPS API:
+
+1. Create a Resend account using the same email address as `CAREGIVER_EMAIL`.
+2. Create a sending API key at https://resend.com/api-keys. Add it to Render as
+   `RESEND_API_KEY`; keep it out of Git and chat.
+3. Set `RESEND_FROM=onboarding@resend.dev`. This demo sender can send only to
+   your Resend account email. For another recipient, verify your own domain
+   in Resend and set `RESEND_FROM` to an address on that domain.
+4. Save the environment changes and redeploy. Gmail credentials are unused
+   when `RESEND_API_KEY` is set. Both approval emails and caregiver alerts
+   use HTTPS; provider failures keep payments awaiting approval.
+5. Reset the simulation through the dashboard and request a new proposal.
+   Text HI, then YES to the new proposal. Previously exhausted email attempts
+   do not automatically restart when the provider is changed. Open the email
+   and click Approve to complete the two-party demo.
+
+The same API key selects Resend in the external-biller mode. Without it, the
+original Gmail SMTP transport remains available for local or paid hosting.
+Approval-email retries use Resend idempotency keys (retained for 24 hours).
+No live email is sent by the automated tests.
+
+References: https://render.com/docs/free,
+https://resend.com/docs/api-reference/emails/send-email,
+https://resend.com/docs/knowledge-base/403-error-resend-dev-domain.
 
 ## Use the studio
 
@@ -82,7 +114,7 @@ by the messaging API, not proof that the phone displayed it.
   distributed coordination and a shared database rather than extra replicas.
 - `STEADY_SIMULATION_DIR` stores account, payment, watcher, audit, and WhatsApp
   session data on the persistent disk. Redeploying preserves these records.
-- The dashboard uses an operator bearer key; webhook routes still require
+- The demo dashboard and scenario controls are public; webhook routes still require
   Twilio signatures and the configured sender. The older local-only routes
   remain local-only. Caregiver links retain their per-request authorization.
 - WhatsApp free-form messages require an inbound message in the past 24 real
@@ -103,7 +135,7 @@ by the messaging API, not proof that the phone displayed it.
 
 ## Verification
 
-`tests/test_simulation_studio.py` exercises remote operator authentication,
+`tests/test_simulation_studio.py` exercises public demo controls and private approval credentials,
 shared WhatsApp balances, exact-cent input, concurrent retries, posted-expense
 accounting, alert delivery/queueing, approval invalidation, income settlement,
 restart persistence, and reset identity. Tests use fakes and send no real

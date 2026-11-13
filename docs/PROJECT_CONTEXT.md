@@ -51,6 +51,31 @@ or assumptions about current Nessie API capabilities.
 
 **The LLM handles judgment and language; code handles money.** These are logical
 responsibilities, not a requirement to deploy six separate services or LLMs.
+
+### Simulated budgeting actions
+
+In local simulation, `backend/simulation/budget_actions.py` adds confirmed named
+savings policies, categorized monthly spending caps and atomic fictional
+checking-to-pot allocations. `backend/autonomy/controller.py` selects spending
+review and allocation tools from current eligibility and observes their results;
+code owns percentages, reserves, destinations, source credits and target limits.
+The shared account SQLite record stores the policy, pot balances and receipts.
+The studio exposes actual simulated progress separately from legacy projected
+savings capacity. This adds no real banking writes; details and rehearsal steps
+are in `docs/SIMULATED_BUDGETING.md`.
+Opt-in adaptive plans add `backend/simulation/strategy.py`: a model selects
+relative goal shares, savings deferral and temporary cap tightening within an
+explicitly confirmed aggregate envelope. The controller reassesses on financial
+changes, stores decisions and measured outcomes, then observes actual allocations.
+The account ledger enforces per-deposit aggregate credits across strategy changes;
+payment approvals, target amounts and protected reserves remain deterministic.
+The goal loop is now an explicit LangGraph `StateGraph` in
+`backend/autonomy/graph.py`. Its SQLite checkpointer stores in-flight observations,
+selected actions and results beside the existing goal database. The controller
+retains intake, financial tool dispatch and notifications; the OpenAI SDK remains
+the model integration. Recovery resumes pending nodes only while financial facts
+and authority match; otherwise it supersedes the checkpoint and replans from the
+ledger. See `LANGGRAPH_GOALS.md` for the node map and restart guarantees.
 The application stack and division of implementation roles are still open.
 
 ## Three-minute demo target

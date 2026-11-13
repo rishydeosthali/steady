@@ -1,10 +1,15 @@
 # Persistent budgeting and autonomous bill resolution
 
 Steady now has a bounded, model-directed controller around its existing tools.
+The planning loop runs as a checkpointed LangGraph workflow; node definitions,
+state fields and recovery tests are documented in `LANGGRAPH_GOALS.md`.
 It chooses its next action from facts and tool results rather than running one
 fixed sequence. Python owns all arithmetic, permissions, payment state changes,
 and receipt verification. This uses the existing Nessie sandbox and independent
-simulated biller; it does not add real banking or transfer money into savings.
+simulated biller; it does not add real banking. In local simulation, confirmed
+named policies can now transfer fictional checking money into savings pots;
+see `SIMULATED_BUDGETING.md`. The original dated budget remains a forecast,
+separate from those recorded simulated allocations.
 
 ## Enable and run
 
@@ -22,6 +27,14 @@ settings as described in `EXTERNAL_BILLER.md`. Start `python -m biller_simulator
 and `python -m backend.app`. No credentials are generated or changed by this
 feature. The standalone `scripts.autopay_demo` is unchanged.
 
+The hosted `python -m backend.hosted` entry point also starts and stops the goal
+worker when enabled. The Render blueprint enables `STEADY_AUTONOMY=1`; existing
+services must update that setting separately. In simulation mode the default
+goal database is `STEADY_SIMULATION_DIR/goals.sqlite`, alongside the account and
+payment databases. Set `STEADY_GOAL_DB` only to override that path. A free Render
+instance can sleep and its filesystem is ephemeral; continuous monitoring and
+restart durability require an always-on instance with persistent storage.
+
 Send from the configured senior's WhatsApp:
 
 > Save $300 by December 25, 2026, keep a $200 cushion, and allow $100 weekly for essentials.
@@ -30,6 +43,12 @@ Use a future date within one year. Essentials means living costs outside listed
 bills, such as groceries and transport. Christmas is also recognized. Steady
 extracts values, checks they occur in the user's text, validates them in code,
 and reads back the complete proposal with an eight-character reference.
+
+Goals can be supplied over several messages: "My goal is to buy a car", then
+"around 22 k", then a deadline and weekly essentials. Incomplete intake survives
+restart and Steady asks for the next missing field. A short numeric/date answer
+continues that intake; payment decisions still use the separate payment path.
+Asking about an unconfirmed proposal repeats its target and confirmation code.
 
 Reply `CONFIRM GOAL <reference>` to activate. A bare YES never changes a goal.
 The confirmation replaces the previous budget only after explicit agreement;
@@ -70,6 +89,12 @@ arguments or unrestricted messages. There is no approve/execute-payment tool.
 The background payment worker continues enforcing previously authorized jobs
 and reconciling their receipts. The goal controller supervises and adapts plans;
 it does not replace the payment state machine.
+
+Every successful bounded turn covers each active savings goal with a deterministic
+forecast and deduplicated report, even when the model spends its steps on bills
+or chooses to wait. The model receives eligible funds-held invoice IDs; awaiting
+approval, cancellation and ordinary unpaid invoices cannot be reconsidered as
+funds-recovery jobs. This prevents routine bill inspection from starving savings.
 
 ## Budget meaning and boundaries
 

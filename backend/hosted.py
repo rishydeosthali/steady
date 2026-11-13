@@ -14,6 +14,7 @@ def main():
     from .config import load_settings, ConfigError
     from .twilio_client import TwilioWhatsApp, SessionClosed
     from .agent.audit import IdleWorker
+    from .autonomy.controller import GoalWorker
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     for name in ("urllib3", "httpx", "httpcore", "openai", "twilio.http_client"):
@@ -29,19 +30,24 @@ def main():
     def offer(text):
         with runtime.lock:
             try:
-                messenger.send_reply(settings.mom_whatsapp_to, text)
+                messenger.send_reply(settings.recipient, text)
             except SessionClosed:
                 pass
 
     idle = IdleWorker(runtime.audit, offer)
+    goals = GoalWorker(app.extensions["autonomy"]) if "autonomy" in app.extensions else None
     runtime.start()
     idle.start()
+    if goals:
+        goals.start()
     try:
         serve(app, host="0.0.0.0", port=int(os.environ.get("PORT", "10000")),
               threads=8, clear_untrusted_proxy_headers=False)
     finally:
         runtime.stop()
         idle.stop()
+        if goals:
+            goals.stop()
 
 
 if __name__ == "__main__":

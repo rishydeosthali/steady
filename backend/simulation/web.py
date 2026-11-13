@@ -1,38 +1,14 @@
-"""Authenticated operator UI. Public webhooks retain Twilio signature checks."""
-import hmac
-import time
+"""Public demo dashboard. WhatsApp webhooks retain Twilio signature checks."""
 from pathlib import Path
 
 from flask import jsonify, request, send_from_directory
 
-from ..config import ConfigError
 from .runtime import Conflict
 
 UI = Path(__file__).parent / "ui"
 
 
-def register_dashboard(app, runtime, token):
-    if not isinstance(token, str) or len(token) < 32:
-        raise ConfigError("STEADY_DASHBOARD_TOKEN must be at least 32 characters")
-    failures = {}
-
-    @app.before_request
-    def dashboard_auth():
-        if not request.path.startswith("/simulation/api/"):
-            return None
-        now = time.monotonic()
-        for addr, value in list(failures.items()):
-            if now - value[1] > 60:
-                failures.pop(addr, None)
-        addr = request.remote_addr
-        count, since = failures.get(addr, (0, now))
-        if count >= 20:
-            return jsonify(error="Too many attempts. Try again in a minute."), 429
-        supplied = request.headers.get("Authorization", "")
-        if not hmac.compare_digest(supplied.encode(), ("Bearer " + token).encode()):
-            failures[addr] = (count+1, since)
-            return jsonify(error="Enter the dashboard access key from your host's environment settings."), 401
-
+def register_dashboard(app, runtime):
     @app.after_request
     def dashboard_headers(response):
         if request.path == "/" or request.path.startswith("/simulation"):

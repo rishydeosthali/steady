@@ -15,9 +15,6 @@ from tests.conftest import MOM, FakeLLM
 from tests.test_app import InlineExecutor, RecordingTwilio, form, sign
 from tests.test_external_biller import FakeMailer
 
-TOKEN = "studio-test-access-key-at-least-32-characters"
-
-
 @pytest.fixture
 def runtime(tmp_path, settings):
     transport = RecordingTwilio(settings)
@@ -35,26 +32,28 @@ def first_job(runtime):
     return next(iter(runtime.payments.state()["jobs"].values()))
 
 
-def test_remote_dashboard_requires_key_and_never_exposes_approval_tokens(runtime):
+def test_public_dashboard_never_exposes_approval_tokens(runtime):
     app = Flask(__name__)
-    register_dashboard(app, runtime, TOKEN)
+    register_dashboard(app, runtime)
     client = app.test_client()
     assert client.get("/").status_code == 200
-    assert TOKEN.encode() not in client.get("/").data
-    assert client.get("/simulation/api/state").status_code == 401
+    assert b"access-key" not in client.get("/").data
+    assert client.get("/simulation/api/state").status_code == 200
     runtime.tick()
     job = first_job(runtime)
     runtime.payments.handle("YES "+job["id"], "yes", "SMstudio-consent")
     raw = runtime.payments.state()
     pending_token = next(m["token"] for m in raw["outbox"] if m["kind"] == "caregiver_email")
-    response = client.get("/simulation/api/state", headers={"Authorization":"Bearer "+TOKEN,
-                        "X-Forwarded-For":"203.0.113.4"})
+    response = client.get("/simulation/api/state", headers={"X-Forwarded-For":"203.0.113.4"})
     assert response.status_code == 200
     assert pending_token not in response.text
     assert "caregiver_token_hash" not in response.text
     assert response.headers["Cache-Control"] == "no-store"
     assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
-    assert client.post("/simulation/api/expense", json={"amount":"20"}).status_code == 401
+    response = client.post("/simulation/api/expense", json={
+        "run_id":runtime.store.state()["run_id"], "merchant":"Demo expense", "amount":"20"},
+        headers={"Idempotency-Key":uuid4().hex})
+    assert response.status_code == 200
 
 
 def test_expense_updates_shared_facts_once_even_with_concurrent_retry(runtime):
@@ -248,7 +247,7 @@ def test_original_signed_webhook_uses_dashboard_account(monkeypatch,tmp_path,set
     monkeypatch.setenv("STEADY_EXTERNAL_BILLER","0")
     monkeypatch.setenv("STEADY_AUTONOMY","0")
     monkeypatch.setenv("STEADY_SIMULATION_DIR",str(tmp_path))
-    monkeypatch.setenv("STEADY_DASHBOARD_TOKEN",TOKEN)
+    monkeypatch.delenv("STEADY_DASHBOARD_TOKEN", raising=False)
     monkeypatch.setattr("backend.app.LLM",lambda *_:llm)
     monkeypatch.setattr("backend.payments.integration.build_mailer",lambda _:FakeMailer())
     twilio = RecordingTwilio(settings)

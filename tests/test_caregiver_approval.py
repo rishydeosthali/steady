@@ -235,6 +235,17 @@ def test_email_failures_retry_then_hold_without_consent(provider,tmp_path,settin
     assert "couldn't reach Sarah by email" in twilio.sent[-1][1]
     assert job(service)["status"] == "awaiting_caregiver" and payments(client) == []
     assert all(item.get("token") is None for item in service.state()["outbox"] if item["kind"] == "caregiver_email")
+    # Background ticks must not revive an exhausted email or repeat the notice.
+    # Real Resend delivery also requires the token that terminal failure erased.
+    def unexpected_retry(*args):
+        raise AssertionError("exhausted caregiver email was retried")
+    mailer.request_approval = unexpected_retry
+    for _ in range(5):
+        service.tick()
+        service.flush()
+    assert job(service)["caregiver_email_attempts"] == MAX_EMAIL_ATTEMPTS
+    assert len([body for _, body in twilio.sent if "couldn't reach Sarah by email" in body]) == 1
+    assert job(service)["status"] == "awaiting_caregiver" and payments(client) == []
 
 
 class FakeSMTP:

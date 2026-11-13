@@ -19,13 +19,22 @@ log = logging.getLogger(__name__)
 
 
 def build_mailer(settings):
-    required = ("GMAIL_ADDRESS","GMAIL_APP_PASSWORD","CAREGIVER_EMAIL")
+    if settings.channel == "slack" and settings.slack_caregiver_user_id:
+        from ..slack_client import SlackCaregiver, SlackMessenger
+        return SlackCaregiver(SlackMessenger(settings))
+    resend_key = os.environ.get("RESEND_API_KEY", "").strip()
+    required = ("CAREGIVER_EMAIL",) if resend_key else ("GMAIL_ADDRESS","GMAIL_APP_PASSWORD","CAREGIVER_EMAIL")
     missing = [name for name in required if not os.environ.get(name, "").strip()]
     if missing:
         raise ConfigError("Caregiver approval email needs: " + ", ".join(missing))
     base_url = (os.environ.get("STEADY_APPROVAL_BASE_URL", "").strip() or settings.public_base_url
                 or "http://127.0.0.1:5000")
     try:
+        if resend_key:
+            from .resend_mailer import ResendMailer
+            return ResendMailer(resend_key, os.environ.get("RESEND_FROM", "").strip() or "onboarding@resend.dev",
+                                os.environ["CAREGIVER_EMAIL"].strip(), base_url=base_url,
+                                caregiver_name=caregiver_name(), senior_name=settings.customer_first_name)
         return CaregiverMailer(os.environ["GMAIL_ADDRESS"].strip(), os.environ["GMAIL_APP_PASSWORD"].strip(),
                                os.environ["CAREGIVER_EMAIL"].strip(), base_url=base_url,
                                caregiver_name=caregiver_name(), senior_name=settings.customer_first_name)
