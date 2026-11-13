@@ -281,7 +281,10 @@ def _find_subscription(p, same):
 
 def _judge_purchase(p, key, snapshot, rhythm, clock, deposit_missing, source):
     same = _completed_by_key(snapshot, key)
-    pocket = compute_pocket(snapshot.get("balance_cents"), snapshot.get("bills", []),
+    balance = snapshot.get("balance_cents")
+    if snapshot.get("posted_purchases_in_balance") and balance is not None:
+        balance += p["amount_cents"]
+    pocket = compute_pocket(balance, snapshot.get("bills", []),
                             snapshot.get("deposits", []), clock, p["amount_cents"], deposit_missing)
     short = pocket is not None and not pocket.holds
     subject = _subject("purchases", p, key)
