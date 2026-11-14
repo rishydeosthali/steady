@@ -82,7 +82,10 @@ class SimulationPayments(PaymentService):
                 return
             latest = {j["invoice_id"]:j for j in state["jobs"].values()}
             invoices, bank = self._invoices(), self._bank(state)
-            for old in latest.values():
+            strategy = self.planning_policy() if self.planning_policy is not None else None
+            order = strategy.get("priority_order", []) if strategy and strategy.get("today") == self.today(state) else []
+            for old in sorted(latest.values(), key=lambda j: order.index(j["invoice_id"])
+                              if j["invoice_id"] in order else len(order)):
                 if old["status"] != "held" or old.get("hold_reason") != "funds":
                     continue
                 bill = next((b for b in invoices if b["id"] == old["invoice_id"]), None)
