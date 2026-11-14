@@ -70,6 +70,7 @@ class PaymentService:
         self.audit = audit
         self.buffer_policy = None
         self.essentials_policy = None
+        self.planning_policy = None
         Path(self.database).parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(self.database) as db:
             db.execute("CREATE TABLE IF NOT EXISTS state (id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL)")
@@ -134,6 +135,74 @@ class PaymentService:
             self._emit(state, self._readback_text(state, job), job, "readback")
             self._audit(state, "autonomous_replan_requires_fresh_approvals", job)
             return {"status": "awaiting_user", "reference": ref, "scheduled_for": when}
+
+    def bill_options(self):
+        """Read-only planning evidence. Dates reserve ALL known obligations.
+
+        The model can select a safe date, never waive another bill or revive
+        consent. Fresh safety checks still apply when a proposal is created.
+        """
+        with self._tx() as (_, state):
+            invoices, bank = self._invoices(), self._bank(state)
+            today = self.today(state)
+            latest = {j["invoice_id"]: j for j in state["jobs"].values()}
+            options = []
+            for bill in invoices:
+                if bill["status"] != "unpaid":
+                    continue
+                job = latest.get(bill["id"])
+                status = job["status"] if job else "unproposed"
+                eligible = job is None or (status == "held" and job.get("hold_reason") == "funds"
+                                           and self._matches(job, bill) and job["account_id"] == bank["id"])
+                known = bill["payee"] in self.known_payees and bill["amount_cents"] <= self.max_cents
+                horizon = (date.fromisoformat(bill["due_date"]) - date.fromisoformat(today)).days
+                dates = []
+                if eligible and known and 0 <= horizon <= 90:
+                    for offset in range(horizon + 1):
+                        when = (date.fromisoformat(today) + timedelta(days=offset)).isoformat()
+                        if self._safe(state, bill, invoices, bank, when):
+                            dates.append(when)
+                block = ("existing_decision" if not eligible else "payee_review" if not known else
+                         "deadline" if not 0 <= horizon <= 90 else "funds" if not dates else "")
+                options.append(dict(invoice_id=bill["id"], payee=bill["payee"], amount_cents=bill["amount_cents"],
+                                    version=bill["version"], due_date=bill["due_date"],
+                                    status=status, candidate_dates=dates, blocked_by=block))
+            return dict(today=today, available_cents=bank["available"], buffer_cents=self.buffer,
+                        account_id=bank["id"], deposits=bank["deposits"], bills=options)
+
+    def validate_bill_schedule(self, schedule):
+        """Validate proposed dates together without storing temporary reservations."""
+        with self._tx() as (_, state):
+            invoices, bank = self._invoices(), self._bank(state)
+            by_id = {b["id"]: b for b in invoices}
+            simulated = json.loads(json.dumps(state))
+            for item in schedule:
+                bill = by_id.get(item["invoice_id"])
+                if (bill is None or bill["status"] != "unpaid"
+                        or bill["version"] != item["version"] or bill["amount_cents"] != item["amount_cents"]
+                        or bill["due_date"] != item["due_date"] or bill["payee"] != item["payee"]
+                        or not self.today(state) <= item["date"] <= bill["due_date"]):
+                    return False
+                jobs = [j for j in state["jobs"].values() if j["invoice_id"] == bill["id"]]
+                if jobs and not (jobs[-1]["status"] == "held" and jobs[-1].get("hold_reason") == "funds"
+                                 and self._matches(jobs[-1], bill)):
+                    return False
+                simulated["jobs"]["planning:" + bill["id"]] = dict(invoice_id=bill["id"],
+                    status="scheduled", scheduled_for=item["date"])
+            return all(self._safe(simulated, by_id[item["invoice_id"]], invoices, bank, item["date"])
+                       for item in schedule)
+
+    def _strategy_date(self, state, bill, account_id):
+        strategy = self.planning_policy() if self.planning_policy is not None else None
+        if not strategy or strategy.get("today") != self.today(state) or strategy.get("account_id") != account_id:
+            return None
+        selected = next((b for b in strategy.get("schedule", []) if b["invoice_id"] == bill["id"]), None)
+        if (selected and selected.get("version") == bill["version"]
+                and selected.get("payee") == bill["payee"]
+                and selected.get("amount_cents") == bill["amount_cents"]
+                and selected.get("due_date") == bill["due_date"]):
+            return selected.get("date") or None
+        return None
 
     @contextmanager
     def _tx(self):
@@ -294,6 +363,13 @@ class PaymentService:
         today, due = map(date.fromisoformat,(self.today(state),bill["due_date"]))
         if due < today or (due-today).days > 90:
             return None
+        preferred = self._strategy_date(state, bill, bank["id"])
+        if preferred:
+            # A stale or now unsafe preference cannot silently become a different
+            # date. Hold it for fresh analysis instead.
+            if today.isoformat() <= preferred <= due.isoformat() and self._safe(state,bill,invoices,bank,preferred):
+                return preferred
+            return None
         for offset in range((due-today).days+1):
             when = (today+timedelta(days=offset)).isoformat()
             if self._safe(state,bill,invoices,bank,when):
@@ -402,7 +478,10 @@ class PaymentService:
             try:
                 invoices, bank = self._invoices(), self._bank(state)
                 seen = {(j["invoice_id"],j["invoice_version"]) for j in state["jobs"].values()}
-                for bill in sorted(invoices,key=lambda b:(b["due_date"],b["id"])):
+                strategy = self.planning_policy() if self.planning_policy is not None else None
+                order = strategy.get("priority_order", []) if strategy and strategy.get("today") == today else []
+                for bill in sorted(invoices,key=lambda b:(order.index(b["id"]) if b["id"] in order else len(order),
+                                                          b["due_date"],b["id"])):
                     delta = (date.fromisoformat(bill["due_date"])-date.fromisoformat(today)).days
                     if bill["status"] != "unpaid" or (bill["id"],bill["version"]) in seen or delta < 0 or delta > 3:
                         continue
