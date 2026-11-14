@@ -47,7 +47,7 @@ recovers and uncertainty is resolved. All *_cents fields are integer CENTS,
 not dollars; use the formatted cash_assessment to interpret reserves."""
 
 
-def choose(actions, llm):
+def choose(actions, llm, bill_strategy=None):
     """Called under the controller/runtime lock; validate fully before persisting."""
     state = actions.runtime.store.state()
     policy = state.get("budget_policy") or {}
@@ -57,7 +57,7 @@ def choose(actions, llm):
     previous = state.get("budget_strategy")
     previous = previous if previous and previous["plan_id"] == policy["id"] else None
     reserves = actions.reserves()
-    context = dict(plan_id=policy["id"], today=state["today"],
+    context = dict(plan_id=policy["id"], today=state["today"], bill_strategy=bill_strategy,
                    envelope_basis_points=sum(g["basis_points"] for g in policy["targets"]),
                    goals=snapshot["goals"], original_caps=policy["caps"],
                    reserves=reserves,

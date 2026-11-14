@@ -80,9 +80,9 @@ class BudgetActions:
                     shortfall_cents=max(0, -headroom), uncertain_payment=uncertain,
                     unpaid_bills_cents=bills, cushion_cents=cushion, essentials_cents=daily*30)
 
-    def replan(self, llm):
+    def replan(self, llm, bill_strategy=None):
         from .strategy import choose
-        return choose(self, llm)
+        return choose(self, llm, bill_strategy=bill_strategy)
 
     def handle(self, text, sid, llm):
         command = re.fullmatch(r"\s*(CONFIRM PLAN|PAUSE PLAN|RESUME PLAN)\s+([A-F0-9]{8})\s*", text, re.I)
