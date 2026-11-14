@@ -11,6 +11,7 @@ from pathlib import Path
 class Memory:
     def __init__(self, path):
         self.path = str(path)
+        self._lease_owner = None
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(self.path) as db:
             db.execute("CREATE TABLE IF NOT EXISTS memory (id INTEGER PRIMARY KEY, body TEXT NOT NULL)")
@@ -45,11 +46,25 @@ class Memory:
             claimed = db.execute("UPDATE lease SET owner=?, expires=? WHERE id=1 AND expires<?",
                                  (owner, time.time() + 600, time.time())).rowcount
         try:
+            if claimed:
+                self._lease_owner = owner
             yield bool(claimed)
         finally:
             if claimed:
                 with sqlite3.connect(self.path, timeout=30) as db:
                     db.execute("UPDATE lease SET expires=0 WHERE id=1 AND owner=?", (owner,))
+                self._lease_owner = None
+
+    def renew_lease(self):
+        """A longer multi-node run must not outlive its exclusive claim."""
+        if self._lease_owner is None:
+            return  # Explicit graph inspection/testing may run without the controller.
+        now = time.time()
+        with sqlite3.connect(self.path, timeout=30) as db:
+            updated = db.execute("UPDATE lease SET expires=? WHERE id=1 AND owner=? AND expires>?",
+                                 (now + 600, self._lease_owner, now)).rowcount
+        if not updated:
+            raise ValueError("Controller lease lost; execution must stop")
 
     def event(self, kind, **detail):
         with self.transaction() as state:
