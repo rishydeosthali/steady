@@ -70,7 +70,8 @@ SQLite database:
   receipt only after the existing payment service has checked it.
 
 An in-process lock and a ten-minute SQLite lease prevent simultaneous controller
-runs and notification flushes from different processes. The application is for
+runs and notification flushes from different processes. Graph nodes renew the
+lease during longer planning cycles. The application is for
 one configured household; do not share a goal database across different users.
 
 The worker observes every 60 seconds. It invokes the model when financial facts
@@ -79,6 +80,12 @@ six model-selected tools. Each result is included in the next model call, and
 prior decisions are available on restart. Repeated identical actions stop the
 run. Model/read failures preserve the goal and schedule a retry after ten minutes;
 the controller never makes financial decisions using a failed refresh.
+
+Dedicated graph nodes now analyze bill timing, analyze the budget, coordinate
+their proposals, validate each selected action, and review actual outcomes.
+The outcome reviewer can return to planning at most twice per run. Rejected
+action attempts count against the same six-step bound. See `LANGGRAPH_GOALS.md`
+for the node/edge diagram, model prompts and plan authority boundaries.
 
 Available tools: refresh facts, calculate a budget, inspect an invoice, reconsider
 a funds-held invoice, report the calculated budget, report an observed bill

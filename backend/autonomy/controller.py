@@ -77,6 +77,16 @@ replannable_invoice_ids: resolve_bill is useful ONLY for those ids. Awaiting
 approval is a reason to wait, not to repeatedly try resolving the same bill.
 After a material financial change, report its impact on the budget before waiting."""
 
+SYSTEM += """\nDedicated bill and budget planners have already proposed strategies.
+Use bill_strategy for invoice priority and safe proposed dates, budget_strategy
+for savings priorities, and coordination for cross-goal conflicts. Choose actions
+that advance that combined plan, not merely a convenient tool order. Never
+allocate savings if coordination.savings_allowed is false. Available tools are
+filtered for this turn; do not request unavailable tools. Inspect a bill before
+resolve_bill. The outcome reviewer can send you back to domain planning after a
+failure or changed progress. A plan is not approval, a forecast is not a transfer,
+and a selected date is not proof of payment."""
+
 SYSTEM += """\nIn local simulation, budget_actions contains confirmed named savings goals,
 actual pot balances, new settled-income eligibility and monthly spending caps.
 review_spending: inspect categories and report progress, id empty.
@@ -103,6 +113,7 @@ class Controller:
         self.max_steps = max(1, min(max_steps, 6))
         self.lock = lock or threading.RLock()
         if payments is not None:
+            payments.planning_policy = lambda: memory.read().get("bill_strategy")
             payments.buffer_policy = lambda: max(memory.protected_buffer(), actions.protected_buffer() if actions else 0)
             payments.essentials_policy = lambda: max(memory.daily_essentials(), actions.daily_essentials() if actions else 0)
 
