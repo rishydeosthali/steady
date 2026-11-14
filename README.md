@@ -1,8 +1,9 @@
 # Steady
 
-A proactive financial agent for older adults, by phone and text. Steady watches
-for upcoming bills, plans payment timing around income, and executes a payment
-after explicit confirmation using Capital One's Nessie sandbox.
+A proactive financial agent for older adults, through Slack direct messages.
+Steady watches for upcoming bills, plans payment timing around income, and
+requests senior and caregiver approval before simulated settlement. The Slack
+demo uses a persistent fictional account; no real money moves.
 
 **The LLM handles judgment and language; code handles money.**
 
@@ -11,39 +12,31 @@ the HackTX demo, and [AGENTS.md](AGENTS.md) for collaboration and conflict handl
 
 ## Hosted scenario studio
 
-The original WhatsApp app has an opt-in persistent simulation dashboard. Add
+The Slack app has an opt-in persistent simulation dashboard. Add
 expenses, change bills, delay/settle income, advance the demo date, and save or
 reset scenarios through a website. Agent replies and payment checks share that
-same fictional account. No live banking writes occur; WhatsApp messages are real.
+same fictional account. No live banking writes occur; Slack messages are real.
 
 Deploy the included `render.yaml` through Render's website for an always-on
-service with persistent storage and no local Cloudflare tunnel. See the
+service with persistent storage and no local Cloudflare tunnel. Set
+`STEADY_CHANNEL=slack` and the Slack settings below in Render; adjust the
+blueprint messaging settings accordingly. Twilio credentials are unused. See the
 [scenario studio guide](docs/SCENARIO_STUDIO.md) for setup and account steps.
 
-## WhatsApp base agent
+## Slack agent
 
-Margaret texts Steady's WhatsApp number. Twilio POSTs to the app, the app reads
-her Nessie data, and Twilio sends the reply back to her WhatsApp. This slice is
-read-only: it answers questions about her balance, bills, deposits and spending.
-It never creates, cancels, or approves a payment. Asking it to pay gets "paying
-is not turned on yet".
+Margaret sends Steady a Slack DM. Slack posts a signed event to the app, which
+acknowledges it immediately, processes it in a worker, and replies through the
+Slack API. Account questions, monitoring, and payment checks share the scenario
+studio's fictional account. Slack currently requires `STEADY_SIMULATION=1`;
+Twilio and Nessie credentials are unused. Bill-photo attachments are not yet
+supported in Slack mode.
 
+```text
+Slack DM -> /slack/events (signature checked, acknowledged immediately)
+                 -> worker -> agent/loop.py -> shared simulated account
+                 -> grounded reply -> slack_client.py -> Slack DM
 ```
-Twilio WhatsApp --POST--> /whatsapp/inbound  (signature checked, empty TwiML at once)
-                                 |
-                          worker thread
-                                 |
-     intent.py (OpenAI label) -> loop.py -> nessie/client.py (GET only)
-                                 |
-                          reply.py (OpenAI wording, checked against the facts)
-                                 |
-              twilio_client.py --Messages API--> Margaret's WhatsApp
-```
-
-Layout: `backend/app.py` (webhook), `backend/agent/{loop,intent,reply,facts,llm}.py`,
-`backend/nessie/client.py`, `backend/twilio_client.py`. Later-slice function
-boundaries (upcoming bills, propose date, request payment, execute, cancel,
-verify claim) are stubs in `backend/money/contracts.py`. Nothing calls them.
 
 ### Setup
 
@@ -54,87 +47,53 @@ pip install -r requirements.txt
 cp .env.example .env              # Windows: copy .env.example .env
 ```
 
-Fill in `.env`. It is gitignored. Never commit it or paste its values anywhere.
-The server stops at startup and names any missing variable:
+Set these values in your private `.env` or hosting environment:
 
-`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM`,
-`MOM_WHATSAPP_TO`, `TWILIO_CONTENT_SID`, `NESSIE_API_KEY`, `NESSIE_BASE_URL`,
-`OPENAI_API_KEY`. Optional: `OPENAI_MODEL` (default `gpt-4o-mini`),
-`PUBLIC_BASE_URL`, `ALLOW_ANY_SENDER=1`, `STEADY_CUSTOMER_NAME` (default `Margaret`).
-
-### Run the server
-
-```sh
-python -m backend.app             # listens on http://127.0.0.1:5000
+```dotenv
+STEADY_CHANNEL=slack
+STEADY_SIMULATION=1
+STEADY_EXTERNAL_BILLER=0
+STEADY_AUTONOMY=1
+STEADY_SIMULATION_DIR=work/slack-simulation
+OPENAI_API_KEY=<your OpenAI API key>
+SLACK_BOT_TOKEN=<your bot token>
+SLACK_SIGNING_SECRET=<your signing secret>
+SLACK_TEAM_ID=<your workspace ID>
+SLACK_SENIOR_USER_ID=<the senior's member ID>
+SLACK_CAREGIVER_USER_ID=<a different member's ID>
 ```
 
-### Open the tunnel
+Never commit credentials. Install the bot with `chat:write`, `im:history`, and
+`im:write`; enable App Home messages. Subscribe to `message.im` at the public
+HTTPS `/slack/events` endpoint. Enable Interactivity at `/slack/actions` for
+caregiver approval buttons. Only the configured caregiver can approve or deny;
+the senior cannot approve their own payment. If the caregiver Slack ID is
+omitted, configure the email provider described in the external-biller guide.
 
-Twilio needs a public HTTPS URL. Any tunnel works. With Cloudflare (no account
-needed for a quick tunnel):
+Run locally with `python -m backend.app` on port 5000. For Slack callbacks,
+expose it with `cloudflared tunnel --url http://127.0.0.1:5000` and use the
+HTTPS origin in both Slack request URLs. Send a DM from the configured senior
+account to start. Slack has no 24-hour messaging window or template requirement.
 
-```sh
-cloudflared tunnel --url http://127.0.0.1:5000
-```
+Requests require a fresh valid Slack signature and the configured workspace and
+user. Bot messages, edits, channel messages, and repeated event IDs are ignored.
+Event IDs persist, but a process crash after acknowledgment may require a new
+message. Use a fresh simulation directory when switching channels.
 
-or with ngrok: `ngrok http 5000`. Note the `https://<tunnel-host>` it prints.
-A quick tunnel gets a new host every time it starts, so repeat the next step then.
+### Example conversations
 
-### Point the webhook at the app
-
-```sh
-python -m backend.register_webhook https://<tunnel-host>
-```
-
-This prints the exact URL: `https://<tunnel-host>/whatsapp/inbound`, method POST.
-If `TWILIO_WHATSAPP_FROM` is an incoming phone number on the account, it sets
-`sms_url` through the Twilio API. The upgraded account uses the WhatsApp sandbox
-number `+14155238886`, which the API cannot update. Set that webhook here:
-
-> Twilio Console > Messaging > Try it out > Send a WhatsApp message > Sandbox settings
-> - When a message comes in: `https://<tunnel-host>/whatsapp/inbound`, method POST
-> - Status callback URL: `https://<tunnel-host>/whatsapp/status`, method POST
-
-`/whatsapp/status` returns 204 and never replies.
-
-### Open the thread
-
-WhatsApp only allows free-form replies inside the 24 hour window that an inbound
-message opens. To start a conversation with no recent inbound message, send the
-approved template instead:
-
-```sh
-python -m backend.ping            # sends TWILIO_CONTENT_SID to MOM_WHATSAPP_TO
-```
-
-The app never sends a free-form message unless Margaret wrote first.
-
-### How a text is handled
-
-| Her text | Result |
+| Message | Result |
 | --- | --- |
-| "What is my balance?" | Checking balance from Nessie |
-| "What bills do I have?" | Payee, amount, payment date, status for each bill |
-| Deposits or spending question | Reads deposits or purchases only for those questions |
-| A photo of a paper bill | Reads company, amount, and due date. Asks YES or NO. YES creates or updates that bill in Nessie. No payment is made |
-| "Pay Austin Energy" | "Paying is not turned on yet." No payment is made |
-| yes / no / undo / forwarded text | Recognised. A YES after a bill photo saves that bill. Otherwise these stay unavailable |
-| Gibberish or off-topic | Asks again. Nessie is not called |
-| Invalid `X-Twilio-Signature` | 403 |
+| "What is my balance?" | Current simulated checking balance |
+| "What bills do I have?" | Known bills and statuses |
+| Deposits or spending question | Facts from the fictional account |
+| "What if I spend $1,900 at the dentist?" | Deterministic affordability check; no purchase is made |
+| YES or NO after a bill proposal | Exact consent handling; include the reference when multiple decisions are open |
+| Unclear text | Clarification rather than a guessed action |
 
-Every dollar amount and date in a reply must appear in what Nessie just returned.
-If the model's wording contains anything else, the app sends a plain rendering
-of the real facts instead. A fact Nessie did not return is stated as unknown.
-
-If Nessie has no customer named Margaret, the app does not create one. It logs
-the customer names that do exist and tells her it cannot see her account.
-Nessie setup (customer, checking account, bills, deposit) is a separate step.
-
-A bill photo is one picture. Steady reads it, says the company, amount, and
-due date in short words, and waits for YES. That write updates a pending
-Nessie bill with the same payee, or adds a new pending bill. It does not pay
-the biller and does not change her balance. NO throws the photo away. A blurry
-picture gets another ask, not a guess.
+Amounts and dates in generated account replies are checked against retrieved
+facts. Unsupported wording falls back to a plain rendering of those facts.
+Unknown information stays unknown. See [the Slack guide](docs/SLACK.md).
 
 ### Tests
 
@@ -142,29 +101,18 @@ picture gets another ask, not a guess.
 python -m pytest
 ```
 
-Tests use dummy credentials and fakes. They need no network and no `.env`.
+Tests use dummy credentials and fakes; integration tests use local HTTP.
+No live service credentials or `.env` are required.
 
-## Recommended payment integration: external demo utility
+## Separate integration: external demo utility
 
-The original WhatsApp backend can now connect to an **independent biller API**
-with its own database and receipt page. Nessie supplies funds checks; a signed
-phone approval authorizes an HTTP request that marks a fictional utility invoice
-paid and returns a receipt. No real money moves and Nessie is not debited.
+The original Twilio backend also supports an independent HTTP biller API with
+its own database and receipt page. This uses Nessie sandbox reads for funds
+checks and simulated settlement; Nessie is not debited. It is separate from
+Slack mode, which requires the shared local simulation.
 
-If your previous checkout tracked `.env`, **save your local copy before pulling**;
-this change stops tracking that file. Restore it privately afterward.
-
-```sh
-python -m scripts.biller_demo init
-python -m biller_simulator        # terminal 1: provider on :5011
-python -m backend.app             # terminal 2: original Steady backend on :5000
-```
-
-Use the existing Twilio tunnel/webhook on port 5000. Open the provider page at
-`http://127.0.0.1:5011` to verify its invoices and receipts independently.
-See [Rishy's external-biller handoff](docs/EXTERNAL_BILLER.md) for the complete
-setup, phone script, remote hosting option, and tests. This path uses the
-original app and does not require the standalone rehearsal below.
+See [the external-biller guide](docs/EXTERNAL_BILLER.md) for its setup, approval
+flow, independent receipts, and tests.
 
 ## Earlier standalone bill-payment rehearsal
 
@@ -179,11 +127,8 @@ Click **Yes**, then **+1 day** twice: expected income settles, a $120 bill is
 paid once in the **local synthetic ledger**, and a confirmation appears.
 Auto-play, cancellation, family approvals, delayed income, and reset are included.
 
-For real phone interaction, the same runner supports `--whatsapp` with locally
-configured Twilio credentials and a signed public webhook. Money remains
-simulated; it does not write to live Nessie or pay a utility. Rishy's original
-read-only server is a separate entry point and remains unchanged.
-See [the autopayment guide](docs/AUTOPAY_DEMO.md) for exact setup and boundaries.
+This runner is separate from the Slack app and uses its own local synthetic
+ledger. See [the autopayment guide](docs/AUTOPAY_DEMO.md) for setup and boundaries.
 
 ## Synthetic bill data
 
@@ -198,18 +143,9 @@ python -m scripts.demo_data facts --scenario safe_payment
 python -m scripts.demo_data export --scenario wait_for_income --output work/robert.json
 ```
 
-To use them with the current WhatsApp app, run the read-only local Nessie fixture:
-
-```sh
-python -m scripts.demo_data serve --scenario safe_payment
-```
-
-Then start the WhatsApp app with `NESSIE_BASE_URL=http://127.0.0.1:5051`,
-`NESSIE_API_KEY=synthetic-not-a-secret`, and `STEADY_CUSTOMER_NAME=Margaret`
-in its process environment. Twilio/OpenAI setup is still required for WhatsApp.
-The fixture server cannot execute payments and never writes to real Nessie.
-See [the synthetic data guide](docs/SYNTHETIC_DATA.md) for exact commands,
-scenario outcomes, date rebasing, reset behavior, and the money-data contract.
+These fixture tools are separate from the Slack dashboard's persistent account.
+See [the synthetic data guide](docs/SYNTHETIC_DATA.md) for scenario outcomes,
+reset behavior, and the money-data contract.
 
 ## Watcher
 
@@ -225,7 +161,7 @@ past purchases never alert.
 
 | Pattern | Who sees it |
 | --- | --- |
-| Bill went up, duplicate charge, new monthly charge, purchase that would leave $200 or less after upcoming bills, usual deposit late, payment she put on hold | Mom, over WhatsApp, only inside the 24-hour session. Otherwise it waits in the queue |
+| Bill went up, duplicate charge, new monthly charge, purchase that would leave $200 or less after upcoming bills, usual deposit late, payment she put on hold | Senior's Slack DM in simulation mode |
 | Bill due within 14 days | Planner queue (`consumer=planner`), silent |
 | One charge somewhere new | Stored only, silent |
 
@@ -238,21 +174,10 @@ python -m backend.watch.run --date 2026-10-24  # pin the clock
 python -m backend.watch.demo                   # fixture shapes, no network
 ```
 
-To show an alert on WhatsApp without touching Nessie, start the server, have
-Mom text the sandbox once (any message), then stage a scenario from
-`C:\Projects\steady\steady`. After that first text, restarts no longer close
-the window: the last inbound is saved and, if needed, looked up from Twilio.
-
-```sh
-python -m backend.watch.stage              # list: duplicate, subscription, bill_increase,
-                                           #       shortfall, deposit_missing, held
-python -m backend.watch.stage duplicate    # memorize a baseline, press Enter, new charge -> text
-```
-
-Staged scenarios use synthetic accounts and their own memory, `data/demo.sqlite`.
-
-Memory lives in `data/ledger.sqlite`, which is gitignored. Delete it to start
-over from a first look. Decisions (accepted, declined, held) are append-only.
+To show an alert in Slack, use the scenario dashboard to add an expense,
+change a bill, or delay income. The simulation scheduler runs monitoring and
+payment checks against that same account. Watcher memory lives in the
+simulation directory's `watch.sqlite3`; decisions are append-only.
 
 Routes for teammates on the same machine. They refuse any request relayed
 through the tunnel (403):
@@ -276,7 +201,7 @@ with fresh senior and caregiver approvals.
 Text: `Save $300 by December 25, 2026, keep a $200 cushion, and allow $100 weekly
 for essentials.` Steady reads it back and asks for `CONFIRM GOAL <reference>`.
 `How is my budget?`, `PAUSE GOAL <reference>`, and `RESUME GOAL <reference>` work
-in the same signed WhatsApp chat. No savings transfer is performed.
+in the same signed Slack DM flow. No savings transfer is performed.
 
 See [autonomous goals](docs/AUTONOMOUS_GOALS.md) for architecture, setup,
 limits, tests, and local inspection routes.
